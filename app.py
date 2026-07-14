@@ -11,7 +11,7 @@ Flow:
   6. Pick call-type and count with client-specific duration configs
   7. Choose sort order
   8. Run VAD (Silero) to get Talk Time / Silence / Dead Air / Longest Silence
-  9. Transcribe each call with Groq Whisper → RoBERTa sentiment analysis → add Sentiment column
+  9. Transcribe each call with Groq Whisper → Groq LLM sentiment analysis → add Sentiment column
  10. Download final Excel report with two sheets: Call Report + Agent Analytics
  11. Agent-wise analysis sheet included (updated categories: Short<2min, Medium 2-5min, Large>5min)
 """
@@ -215,7 +215,7 @@ st.markdown("""
 st.markdown("""
 <div class="callai-hero">
     <h1>📞 CallAI · Talk-Time + Sentiment</h1>
-    <p>Pick a client, fetch calls, filter, get Talk-Time / Silence / Dead-Air, and now also analyse sentiment with Groq Whisper + RoBERTa.</p>
+    <p>Pick a client, fetch calls, filter, get Talk-Time / Silence / Dead-Air, and now also analyse sentiment with Groq Whisper + Groq LLM.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -240,15 +240,6 @@ try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 except:
     GROQ_API_KEY = ""
-
-# ============================================================
-# 🆕 HUGGING FACE TOKEN - load from secrets (optional but recommended)
-# ============================================================
-try:
-    HF_TOKEN = st.secrets["HF_TOKEN"]
-    os.environ["HF_TOKEN"] = HF_TOKEN
-except:
-    HF_TOKEN = None
 
 # ============================================================
 # ⚠️ CLIENTS - name -> company_id (edit this dict to add/remove clients)
@@ -654,40 +645,19 @@ def generate_agent_analytics(df, duration_col='_duration_sec'):
     return agent_stats
 
 # ============================================================
-# 🆕 GROQ WHISPER + SENTIMENT FUNCTIONS - FIXED
+# 🆕 GROQ WHISPER + SENTIMENT FUNCTIONS
+# (Sentiment now uses Groq's LLM instead of a local RoBERTa model —
+#  no heavy model download, no extra RAM usage, no "stuck loading" issue.)
 # ============================================================
 
-@st.cache_resource(show_spinner="🔄 Loading RoBERTa sentiment model (first run only)...")
 def load_sentiment_pipeline():
     """
-    Load a RoBERTa-based sentiment analysis pipeline from Hugging Face.
-    Model: cardiffnlp/twitter-roberta-base-sentiment (supports negative/neutral/positive)
+    No local model to load anymore. Sentiment is computed via a Groq LLM
+    call inside analyze_sentiment(). Kept as a function (returning a simple
+    marker) so the rest of the code that calls load_sentiment_pipeline()
+    and passes the result into analyze_sentiment() doesn't need to change.
     """
-    try:
-        # Lazy import - only loads transformers when this function is called
-        from transformers import pipeline
-        
-        # Check if token is available
-        if HF_TOKEN:
-            # Authenticated request with token
-            return pipeline(
-                "sentiment-analysis",
-                model="cardiffnlp/twitter-roberta-base-sentiment",
-                device=-1,  # CPU
-                top_k=None,
-                token=HF_TOKEN  # Add token for authentication
-            )
-        else:
-            # Fallback to unauthenticated (with warning)
-            return pipeline(
-                "sentiment-analysis",
-                model="cardiffnlp/twitter-roberta-base-sentiment",
-                device=-1,  # CPU
-                top_k=None
-            )
-    except Exception as e:
-        st.warning(f"⚠️ Sentiment model not available: {e}")
-        return None
+    return "groq" if GROQ_API_KEY else None
 
 def groq_transcribe(audio_file_path, api_key):
     """
@@ -710,27 +680,38 @@ def groq_transcribe(audio_file_path, api_key):
 
 def analyze_sentiment(text, pipeline):
     """
-    Use the loaded RoBERTa pipeline to get sentiment label.
+    Sentiment via Groq's LLM (no local model needed).
     Returns one of: 'Positive', 'Negative', 'Neutral'.
     """
     if not text or not text.strip():
         return "Neutral"
-    if pipeline is None:
+    if pipeline is None or not GROQ_API_KEY:
         return "Neutral"
     try:
-        results = pipeline(text)
-        if results and isinstance(results, list) and len(results) > 0:
-            best = max(results[0], key=lambda x: x['score'])
-            label = best['label']
-            if label == 'LABEL_2':
-                return "Positive"
-            elif label == 'LABEL_0':
-                return "Negative"
-            else:
-                return "Neutral"
-    except Exception as e:
+        client = groq.Groq(api_key=GROQ_API_KEY)
+        resp = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Classify the sentiment of the given call transcript as exactly one "
+                        "word: Positive, Negative, or Neutral. Reply with only that one word, "
+                        "nothing else."
+                    ),
+                },
+                {"role": "user", "content": text[:3000]},
+            ],
+            temperature=0,
+            max_tokens=5,
+        )
+        raw = resp.choices[0].message.content.strip()
+        label = raw.split()[0].strip(".,!").capitalize() if raw else ""
+        if label in ("Positive", "Negative", "Neutral"):
+            return label
         return "Neutral"
-    return "Neutral"
+    except Exception:
+        return "Neutral"
 
 # ============================================================
 # 🆕 CUSTOM FILTER FUNCTION - Parse user filter expression
@@ -1072,7 +1053,7 @@ if have_data:
     # ============================================================
     st.markdown('<div class="step-card">', unsafe_allow_html=True)
     st.markdown('<div class="step-title"><span class="step-badge">3</span>Run Talk-Time & Sentiment Analysis</div>', unsafe_allow_html=True)
-    st.markdown('<p class="step-subtitle">Downloads recordings, measures speech/silence, transcribes with Groq Whisper, and performs RoBERTa sentiment analysis.</p>', unsafe_allow_html=True)
+    st.markdown('<p class="step-subtitle">Downloads recordings, measures speech/silence, transcribes with Groq Whisper, and performs sentiment analysis via Groq LLM.</p>', unsafe_allow_html=True)
 
     with st.expander("⚙️ Fine-tune detection accuracy (optional)"):
         st.caption(
@@ -1098,7 +1079,7 @@ if have_data:
         elif len(selected_df) == 0:
             st.warning("No calls selected — nothing to process.")
         else:
-            # ---------- Load sentiment pipeline ----------
+            # ---------- Load sentiment "pipeline" (Groq marker) ----------
             sentiment_pipeline = load_sentiment_pipeline()
 
             @st.cache_resource(show_spinner="🔄 Loading voice-detection model (first run only)...")
@@ -1288,7 +1269,7 @@ if have_data:
                                             metrics = compute_metrics(merged, total_duration)
                                             metrics["duration"] = round(total_duration, 2)
                                             
-                                            # ---- NEW: Groq Whisper transcription ----
+                                            # ---- Groq Whisper transcription + Groq sentiment ----
                                             if GROQ_API_KEY:
                                                 try:
                                                     transcript = groq_transcribe(mp3_path, GROQ_API_KEY)
