@@ -5,7 +5,7 @@ requests>=2.31.0
 beautifulsoup4>=4.12.0
 librosa>=0.10.0
 soundfile>=0.12.0
-torch==2.3.1+cpu --index-url https://download.pytorch.org/whl/cpu
+torch @ https://download.pytorch.org/whl/cpu/torch-2.1.1+cpu-cp310-cp310-linux_x86_64.whl
 transformers>=4.35.0
 groq>=0.4.0
 openpyxl>=3.1.0
