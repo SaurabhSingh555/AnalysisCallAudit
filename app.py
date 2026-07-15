@@ -283,10 +283,17 @@ CLIENT_DURATION_CONFIGS = {
 }
 
 def get_duration_config(client_name):
-    """Get duration configuration for a specific client"""
+    """
+    Get duration configuration for a specific client.
+    Order of priority: session overrides (set via Apply button)
+    > client-specific config > default config.
+    """
     config = DEFAULT_DURATION_CONFIG.copy()
     if client_name in CLIENT_DURATION_CONFIGS:
         config.update(CLIENT_DURATION_CONFIGS[client_name])
+    session_overrides = st.session_state.get("duration_overrides", {})
+    if client_name in session_overrides:
+        config.update(session_overrides[client_name])
     return config
 
 # ============================================================
@@ -299,6 +306,7 @@ defaults = {
     "final_df": None,
     "agent_analytics_df": None,
     "vdcl_removed": 0,
+    "duration_overrides": {},   # per-client session overrides, e.g. {"Weebo": {...}}
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -547,34 +555,26 @@ def filter_out_vdcl_calls(df):
     
     agent_values = df[agent_col].fillna('').astype(str)
     mask = agent_values.str.contains('VDCL', case=False, na=False, regex=False)
-    removed_count = mask.sum()
-    
-    if removed_count > 0:
-        removed_samples = df[mask][agent_col].head(5).tolist()
-        st.session_state['vdcl_removed'] = removed_count
-        sample_str = ', '.join(str(x) for x in removed_samples[:3])
-        st.markdown(
-            f'<div class="status-banner-warning">🗑️ Removed {removed_count} VDCL (abandoned) call(s) from Agent column "{agent_col}". '
-            f'Samples: {sample_str}</div>',
-            unsafe_allow_html=True
-        )
-    
+    removed_count = int(mask.sum())
+
     filtered_df = df[~mask].copy()
     return filtered_df, removed_count
 
 # ============================================================
 # AGENT ANALYTICS FUNCTION (UPDATED CATEGORIES)
 # ============================================================
-def generate_agent_analytics(df, duration_col='_duration_sec'):
+def generate_agent_analytics(df, duration_col='_duration_sec', duration_config=None):
     """
-    Generate comprehensive agent-wise analytics with updated categories:
-    - Short: < 2 min
-    - Medium: 2 to 5 min
-    - Large: > 5 min
+    Generate comprehensive agent-wise analytics using the SAME thresholds
+    the user picked for filtering (duration_config), instead of hard-coded
+    values, so this table always matches the Call-type buckets on screen.
     """
     if df is None or len(df) == 0:
         return None
     
+    if duration_config is None:
+        duration_config = DEFAULT_DURATION_CONFIG
+
     # Find agent column
     agent_col = None
     for col in ['full_name', 'agent', 'Agent Name', 'AgentName', 'agent_name']:
@@ -590,13 +590,17 @@ def generate_agent_analytics(df, duration_col='_duration_sec'):
     if duration_col not in df_copy.columns:
         return None
     
-    # Categorize calls (updated)
+    has_xl = duration_config.get('extra_large_enabled', False)
+
+    # Categorize calls using the active (possibly overridden) config
     def categorize_call(duration):
-        if duration < 120:          # < 2 min
+        if duration < duration_config['short_max']:
             return 'Short'
-        elif duration <= 300:       # 2 to 5 min
+        elif duration <= duration_config['medium_max']:
             return 'Medium'
-        else:                       # > 5 min
+        elif has_xl and duration > duration_config['extra_large_min']:
+            return 'Extra Large'
+        else:
             return 'Large'
     
     df_copy['Call_Category'] = df_copy[duration_col].apply(categorize_call)
@@ -623,11 +627,17 @@ def generate_agent_analytics(df, duration_col='_duration_sec'):
     agent_stats['Large_Calls'] = agent_stats['Category_Counts'].apply(
         lambda x: extract_category_counts(x, 'Large')
     )
+    if has_xl:
+        agent_stats['Extra_Large_Calls'] = agent_stats['Category_Counts'].apply(
+            lambda x: extract_category_counts(x, 'Extra Large')
+        )
     
     # Calculate percentages
     agent_stats['Short_%'] = (agent_stats['Short_Calls'] / agent_stats['Total_Calls'] * 100).round(2)
     agent_stats['Medium_%'] = (agent_stats['Medium_Calls'] / agent_stats['Total_Calls'] * 100).round(2)
     agent_stats['Large_%'] = (agent_stats['Large_Calls'] / agent_stats['Total_Calls'] * 100).round(2)
+    if has_xl:
+        agent_stats['Extra_Large_%'] = (agent_stats['Extra_Large_Calls'] / agent_stats['Total_Calls'] * 100).round(2)
     
     # Format duration columns
     agent_stats['Avg_Duration_Formatted'] = agent_stats['Avg_Duration'].apply(fmt_hms)
@@ -759,7 +769,7 @@ st.markdown('<p class="step-subtitle">Only calls belonging to the selected clien
 
 c1, c2 = st.columns([1.2, 1.8])
 with c1:
-    client_name = st.selectbox("Client", options=list(CLIENTS.keys()))
+    client_name = st.selectbox("Client", options=sorted(CLIENTS.keys()))
     company_id = CLIENTS[client_name]
 with c2:
     dc1, dc2 = st.columns(2)
@@ -776,6 +786,7 @@ if st.session_state.get("cdr_client") is not None and st.session_state["cdr_clie
     st.session_state["cdr_client"] = None
     st.session_state["final_df"] = None
     st.session_state["agent_analytics_df"] = None
+    st.session_state["vdcl_removed"] = 0
 
 fetch_clicked = st.button("📥  Fetch Calls", type="primary")
 st.markdown('</div>', unsafe_allow_html=True)
@@ -807,6 +818,7 @@ if fetch_clicked:
                 
                 # Auto-filter VDCL (abandoned) calls
                 cdr_df, removed_count = filter_out_vdcl_calls(cdr_df)
+                st.session_state["vdcl_removed"] = removed_count
                 
                 # Add _duration_sec for internal use
                 dur_source_col, duration_seconds = resolve_duration_column(cdr_df)
@@ -820,9 +832,8 @@ if fetch_clicked:
                 if len(cdr_df) == 0:
                     st.warning(f"No valid calls found for **{client_name}** in this date range (VDCL calls auto-removed).")
                 else:
-                    vdcl_msg = f" (removed {removed_count} VDCL abandoned calls)" if removed_count > 0 else " (no VDCL calls found)"
                     st.markdown(
-                        f'<span class="status-banner-ok">✅ Fetched {len(cdr_df)} valid calls for {client_name}{vdcl_msg}</span>',
+                        f'<span class="status-banner-ok">✅ Fetched {len(cdr_df)} valid calls for {client_name}</span>',
                         unsafe_allow_html=True,
                     )
             else:
@@ -867,65 +878,114 @@ if have_data:
     
     # Show current config for the selected client
     with st.expander(f"📊 Duration Configuration for {client_name}", expanded=False):
+        has_xl = duration_config.get('extra_large_enabled', False)
+        large_line = (
+            f"• Large calls: {fmt_hms(duration_config['large_min'])} – {fmt_hms(duration_config['extra_large_min'])}<br>"
+            f"• Extra Large calls: &gt; {fmt_hms(duration_config['extra_large_min'])}<br>"
+            if has_xl else
+            f"• Large calls: &gt; {fmt_hms(duration_config['large_min'])}<br>"
+        )
         st.markdown(f"""
         <div class="config-box">
             <strong>Current Duration Settings:</strong><br>
-            • Short calls: &lt; {fmt_hms(duration_config['short_max'])} ({duration_config['short_max']} sec)<br>
+            • Short calls: &lt; {fmt_hms(duration_config['short_max'])}<br>
             • Medium calls: {fmt_hms(duration_config['medium_min'])} – {fmt_hms(duration_config['medium_max'])}<br>
-            • Large calls: &gt; {fmt_hms(duration_config['large_min'])} ({duration_config['large_min']} sec)<br>
+            {large_line}
         </div>
         """, unsafe_allow_html=True)
         
-        # Option to override configuration temporarily
-        st.caption("Override settings for this session (changes won't be saved permanently):")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            override_short = st.number_input(
-                "Short max (sec)", 
-                min_value=10, 
-                max_value=300, 
-                value=duration_config['short_max'],
-                step=10,
-                key="override_short"
+        # Simple 2-cutoff override (Short/Medium boundary + Medium/Large boundary).
+        # Only 2 numbers are needed since Medium always sits between them —
+        # this avoids agents entering mismatched values by mistake.
+        st.caption("Change the cutoffs below for this client (this browser session only), then click Apply.")
+        oc1, oc2, oc3 = st.columns([1, 1, 1])
+        with oc1:
+            short_cutoff_min = st.number_input(
+                "Short ends at (minutes)",
+                min_value=0.5, max_value=15.0,
+                value=round(duration_config['short_max'] / 60, 2),
+                step=0.5,
+                key=f"short_cutoff_{client_name}",
+                help="Calls shorter than this are counted as 'Short'.",
             )
-        with col2:
-            override_medium_min = st.number_input(
-                "Medium min (sec)", 
-                min_value=10, 
-                max_value=300, 
-                value=duration_config['medium_min'],
-                step=10,
-                key="override_medium_min"
+        with oc2:
+            large_cutoff_min = st.number_input(
+                "Large starts after (minutes)",
+                min_value=short_cutoff_min, max_value=30.0,
+                value=max(round(duration_config['large_min'] / 60, 2), short_cutoff_min),
+                step=0.5,
+                key=f"large_cutoff_{client_name}",
+                help="Calls longer than this are counted as 'Large'. Anything in between is 'Medium'.",
             )
-            override_medium_max = st.number_input(
-                "Medium max (sec)", 
-                min_value=override_medium_min, 
-                max_value=600, 
-                value=duration_config['medium_max'],
-                step=10,
-                key="override_medium_max"
+        with oc3:
+            st.markdown("<div style='height: 28px'></div>", unsafe_allow_html=True)
+            bcol1, bcol2 = st.columns(2)
+            with bcol1:
+                apply_clicked = st.button("✅ Apply", key="apply_overrides", use_container_width=True)
+            with bcol2:
+                if st.button("↩️ Reset", key="reset_overrides", use_container_width=True):
+                    st.session_state["duration_overrides"].pop(client_name, None)
+                    st.success("↩️ Reset to default.")
+                    st.rerun()
+
+        st.markdown("---")
+        # 🆕 Optional "Extra Large" bucket — e.g. flag anything over 8 minutes separately.
+        enable_xl = st.checkbox(
+            "➕ Also split out an 'Extra Large' bucket (e.g. calls over 8 min)",
+            value=duration_config.get('extra_large_enabled', False),
+            key=f"enable_xl_{client_name}",
+        )
+        xl_cutoff_min = None
+        if enable_xl:
+            default_xl = duration_config.get('extra_large_min', duration_config['large_min'] + 180)
+            xl_cutoff_min = st.number_input(
+                "Extra Large starts after (minutes)",
+                min_value=large_cutoff_min, max_value=60.0,
+                value=max(round(default_xl / 60, 2), large_cutoff_min + 0.5),
+                step=0.5,
+                key=f"xl_cutoff_{client_name}",
+                help="Calls longer than this show up as their own 'Extra Large' bucket, separate from 'Large'.",
             )
-        with col3:
-            override_large = st.number_input(
-                "Large min (sec)", 
-                min_value=10, 
-                max_value=600, 
-                value=duration_config['large_min'],
-                step=10,
-                key="override_large"
-            )
-        
-        if st.button("Apply Overrides", key="apply_overrides"):
-            # Update config with overrides
-            duration_config['short_max'] = override_short
-            duration_config['medium_min'] = override_medium_min
-            duration_config['medium_max'] = override_medium_max
-            duration_config['large_min'] = override_large
-            st.success("✅ Configuration updated for this session!")
+
+        if apply_clicked:
+            override = {
+                "short_max": int(round(short_cutoff_min * 60)),
+                "medium_min": int(round(short_cutoff_min * 60)),
+                "medium_max": int(round(large_cutoff_min * 60)),
+                "large_min": int(round(large_cutoff_min * 60)),
+                "extra_large_enabled": enable_xl,
+            }
+            if enable_xl and xl_cutoff_min:
+                override["extra_large_min"] = int(round(xl_cutoff_min * 60))
+            st.session_state["duration_overrides"][client_name] = override
+            st.success("✅ Applied for this session!")
             st.rerun()
 
+    # ---- Search & Filter (Agent Name, Phone Number) ----
+    st.markdown("#### 🔍 Search")
+    scol1, scol2 = st.columns([1.6, 1.2])
+    with scol1:
+        agent_options = sorted(cdr_df[col_agent].dropna().astype(str).unique().tolist()) if col_agent else []
+        selected_agents = st.multiselect(
+            "Agent Name (leave empty for all agents)",
+            options=agent_options,
+            default=[],
+            help="Start typing an agent's name to search and select one or more.",
+        )
+    with scol2:
+        phone_search = st.text_input(
+            "Phone Number contains",
+            value="",
+            placeholder="e.g. 98765",
+        )
+
+    if selected_agents and col_agent:
+        cdr_df = cdr_df[cdr_df[col_agent].astype(str).isin(selected_agents)]
+    if phone_search.strip() and col_phone:
+        cdr_df = cdr_df[cdr_df[col_phone].astype(str).str.contains(phone_search.strip(), case=False, na=False)]
+
     # Summary pills
-    p1, p2, p3 = st.columns(3)
+    p1, p2, p3, p4 = st.columns(4)
     with p1:
         st.markdown(f'<div class="metric-pill"><div class="value">{len(cdr_df)}</div><div class="label">Total valid calls</div></div>', unsafe_allow_html=True)
     with p2:
@@ -933,61 +993,60 @@ if have_data:
         st.markdown(f'<div class="metric-pill"><div class="value">{fmt_hms(avg_dur)}</div><div class="label">Average call duration</div></div>', unsafe_allow_html=True)
     with p3:
         st.markdown(f'<div class="metric-pill"><div class="value">{client_name}</div><div class="label">Client</div></div>', unsafe_allow_html=True)
+    with p4:
+        st.markdown(f'<div class="metric-pill"><div class="value">{st.session_state.get("vdcl_removed", 0)}</div><div class="label">Abandoned (VDCL) removed</div></div>', unsafe_allow_html=True)
 
     # Filter controls - UPDATED with Custom Filter option
     bcol, ccol = st.columns([2, 1.2])
     with bcol:
         # 🆕 Use client-specific duration config in bucket labels
+        has_xl = duration_config.get('extra_large_enabled', False)
         short_label = f"Short (< {fmt_hms(duration_config['short_max'])})"
         medium_label = f"Medium ({fmt_hms(duration_config['medium_min'])} – {fmt_hms(duration_config['medium_max'])})"
-        large_label = f"Large (> {fmt_hms(duration_config['large_min'])})"
-        
+        if has_xl:
+            large_label = f"Large ({fmt_hms(duration_config['large_min'])} – {fmt_hms(duration_config['extra_large_min'])})"
+            extra_large_label = f"Extra Large (> {fmt_hms(duration_config['extra_large_min'])})"
+        else:
+            large_label = f"Large (> {fmt_hms(duration_config['large_min'])})"
+            extra_large_label = None
+
+        bucket_options = ["All calls", short_label, medium_label, large_label]
+        if has_xl:
+            bucket_options.append(extra_large_label)
+        bucket_options.append("Custom Filter")
+
         bucket = st.radio(
             "Call type",
-            [
-                "All calls",
-                short_label,
-                medium_label,
-                large_label,
-                "Custom Filter",
-            ],
+            bucket_options,
             horizontal=True,
         )
         
-        # Custom filter input - shown only when Custom Filter is selected
+        # Custom filter — simple point-and-click, no expression writing needed
         custom_filter_expr = ""
         if bucket == "Custom Filter":
-            st.markdown("""
-            **📝 Enter filter expression:**
-            - Use `duration` as the variable name
-            - Examples:
-                - `duration < 120` (less than 2 min)
-                - `duration > 480` (greater than 8 min)
-                - `duration >= 300 and duration <= 600` (between 5-10 min)
-                - `duration == 0` (zero duration calls)
-            """)
-            custom_filter_expr = st.text_input(
-                "Filter expression",
-                value=f"duration < {duration_config['short_max']}",
-                help="Use 'duration' as variable name. Example: duration < 120 (less than 2 min)",
-                key="custom_filter_input"
+            st.caption("📝 Pick calls by duration — no code needed.")
+            filter_kind = st.radio(
+                "Show calls where duration is...",
+                ["Less than", "Greater than", "Between", "Exactly 0 (zero-duration)"],
+                horizontal=True,
+                key="custom_filter_kind",
             )
-            # Show quick preset buttons based on client config
-            col_preset1, col_preset2, col_preset3, col_preset4 = st.columns(4)
-            with col_preset1:
-                if st.button(f"⬇️ < {fmt_hms(duration_config['short_max'])}", use_container_width=True):
-                    st.session_state.custom_filter_input = f"duration < {duration_config['short_max']}"
-                    st.rerun()
-            with col_preset2:
-                if st.button(f"⬆️ > {fmt_hms(duration_config['large_min'])}", use_container_width=True):
-                    st.session_state.custom_filter_input = f"duration > {duration_config['large_min']}"
-                    st.rerun()
-            with col_preset3:
-                if st.button(f"📊 {fmt_hms(duration_config['medium_min'])}-{fmt_hms(duration_config['medium_max'])}", use_container_width=True):
-                    st.session_state.custom_filter_input = f"duration >= {duration_config['medium_min']} and duration <= {duration_config['medium_max']}"
-                    st.rerun()
-            with col_preset4:
-                st.button("📊 Custom Range", use_container_width=True, disabled=True)
+            if filter_kind == "Less than":
+                cf_max = st.number_input("...this many minutes", min_value=0.0, value=2.0, step=0.5, key="cf_lt")
+                custom_filter_expr = f"duration < {cf_max * 60}"
+            elif filter_kind == "Greater than":
+                cf_min = st.number_input("...this many minutes", min_value=0.0, value=8.0, step=0.5, key="cf_gt")
+                custom_filter_expr = f"duration > {cf_min * 60}"
+            elif filter_kind == "Between":
+                cfb1, cfb2 = st.columns(2)
+                with cfb1:
+                    cf_from = st.number_input("From (minutes)", min_value=0.0, value=5.0, step=0.5, key="cf_from")
+                with cfb2:
+                    cf_to = st.number_input("To (minutes)", min_value=cf_from, value=10.0, step=0.5, key="cf_to")
+                custom_filter_expr = f"duration >= {cf_from * 60} and duration <= {cf_to * 60}"
+            else:  # Exactly 0
+                custom_filter_expr = "duration == 0"
+            st.caption(f"Filter applied: calls between the values you chose above.")
     
     with ccol:
         count_mode = st.radio("How many calls?", ["All matching", "Manual number"], horizontal=True)
@@ -1008,11 +1067,16 @@ if have_data:
     elif bucket == medium_label:
         matched = cdr_df[(cdr_df["_duration_sec"] >= duration_config['medium_min']) & (cdr_df["_duration_sec"] <= duration_config['medium_max'])]
     elif bucket == large_label:
-        matched = cdr_df[cdr_df["_duration_sec"] > duration_config['large_min']]
+        if has_xl:
+            matched = cdr_df[(cdr_df["_duration_sec"] > duration_config['large_min']) & (cdr_df["_duration_sec"] <= duration_config['extra_large_min'])]
+        else:
+            matched = cdr_df[cdr_df["_duration_sec"] > duration_config['large_min']]
+    elif has_xl and bucket == extra_large_label:
+        matched = cdr_df[cdr_df["_duration_sec"] > duration_config['extra_large_min']]
     elif bucket == "Custom Filter":
         matched = apply_custom_filter(cdr_df, custom_filter_expr)
         if len(matched) == 0:
-            st.warning("No calls match your filter expression. Please check the syntax.")
+            st.warning("No calls match your filter. Please adjust the values above.")
     else:  # All calls
         matched = cdr_df
 
@@ -1026,10 +1090,7 @@ if have_data:
             st.info(f"Showing {int(manual_n)} of {available} matching calls.")
     else:
         selected_df = matched
-        if bucket == "Custom Filter":
-            st.info(f"Showing all {available} matching calls for custom filter: `{custom_filter_expr}`")
-        else:
-            st.info(f"Showing all {available} matching calls for **{bucket}**.")
+        st.info(f"Showing all {available} matching calls for **{bucket}**.")
 
     # --- Build the SINGLE filtered table (duration first, S.No, sorted) ---
     display_cols = [
@@ -1348,7 +1409,7 @@ if have_data:
             final_df = final_df[REORDERED_COLUMNS + ["_debug_status"]]
 
             # Generate Agent Analytics (with updated categories)
-            agent_analytics_df = generate_agent_analytics(selected_df, '_duration_sec')
+            agent_analytics_df = generate_agent_analytics(selected_df, '_duration_sec', duration_config)
             
             st.session_state["final_df"] = final_df
             st.session_state["agent_analytics_df"] = agent_analytics_df
@@ -1409,12 +1470,15 @@ if have_data:
                     st.metric("Most Large Calls", best_large)
                 
                 # Show detailed table
+                detail_cols = [
+                    'Rank', 'Agent', 'Total_Calls', 'Short_Calls', 'Short_%',
+                    'Medium_Calls', 'Medium_%', 'Large_Calls', 'Large_%',
+                ]
+                if 'Extra_Large_Calls' in agent_analytics_df.columns:
+                    detail_cols += ['Extra_Large_Calls', 'Extra_Large_%']
+                detail_cols += ['Avg_Duration_Formatted', 'Total_Duration_Formatted']
                 st.dataframe(
-                    agent_analytics_df[[
-                        'Rank', 'Agent', 'Total_Calls', 'Short_Calls', 'Short_%',
-                        'Medium_Calls', 'Medium_%', 'Large_Calls', 'Large_%',
-                        'Avg_Duration_Formatted', 'Total_Duration_Formatted'
-                    ]],
+                    agent_analytics_df[detail_cols],
                     width='stretch',
                     height=300
                 )
@@ -1450,16 +1514,23 @@ if have_data:
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
             export_df.to_excel(writer, index=False, sheet_name="Call Report")
             if agent_export_df is not None and len(agent_export_df) > 0:
-                agent_sheet = agent_export_df[[
+                has_xl_col = 'Extra_Large_Calls' in agent_export_df.columns
+                export_cols = [
                     'Rank', 'Agent', 'Total_Calls', 'Short_Calls', 'Short_%',
                     'Medium_Calls', 'Medium_%', 'Large_Calls', 'Large_%',
-                    'Avg_Duration_Formatted', 'Total_Duration_Formatted'
-                ]].copy()
-                agent_sheet.columns = [
+                ]
+                export_headers = [
                     'Rank', 'Agent', 'Total Calls', 'Short Calls', 'Short %',
                     'Medium Calls', 'Medium %', 'Large Calls', 'Large %',
-                    'Avg Duration', 'Total Duration'
                 ]
+                if has_xl_col:
+                    export_cols += ['Extra_Large_Calls', 'Extra_Large_%']
+                    export_headers += ['Extra Large Calls', 'Extra Large %']
+                export_cols += ['Avg_Duration_Formatted', 'Total_Duration_Formatted']
+                export_headers += ['Avg Duration', 'Total Duration']
+
+                agent_sheet = agent_export_df[export_cols].copy()
+                agent_sheet.columns = export_headers
                 agent_sheet.to_excel(writer, index=False, sheet_name="Agent Analytics")
         buf.seek(0)
         st.download_button(
