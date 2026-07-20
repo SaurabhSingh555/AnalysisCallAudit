@@ -1,12 +1,33 @@
+# Core dependencies
 streamlit>=1.28.0
 pandas>=2.0.0
 numpy>=1.24.0
 requests>=2.31.0
 beautifulsoup4>=4.12.0
+
+# Audio processing
 librosa>=0.10.0
 soundfile>=0.12.0
+scipy>=1.10.0
+
+# Machine Learning / Deep Learning
 torch>=2.0.0
 torchaudio>=2.0.0
+torchvision>=0.15.0
+
+# VAD (Voice Activity Detection)
+silero-vad>=5.0.0
+
+# APIs and integrations
 groq>=0.4.0
+
+# Excel and scheduling
 openpyxl>=3.1.0
 schedule>=1.2.2
+
+# Type hints and utilities
+typing-extensions>=4.5.0
+
+# Additional helpful packages
+pytz>=2023.0            # For timezone handling
+python-dateutil>=2.8.0  # For date parsing
