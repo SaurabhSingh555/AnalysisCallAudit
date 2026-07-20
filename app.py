@@ -1512,7 +1512,7 @@ def _send_mime(msg, mentor_emails, smtp_config=None):
 
 
 def send_performance_report_email(perf_table, silence_df, client_name, mentor_emails, large_threshold_min, smtp_config=None):
-    """Send performance report email."""
+    """Send performance report email - WITHOUT summary cards."""
     if smtp_config is None:
         smtp_config = get_smtp_config()
     
@@ -1558,18 +1558,12 @@ def send_performance_report_email(perf_table, silence_df, client_name, mentor_em
             </tr>
             """
 
-        avg_overall = perf_table['Overall_Silence'].mean() if 'Overall_Silence' in perf_table else 0
-        best_agent = perf_table.iloc[0].get('Agent', 'N/A') if len(perf_table) > 0 else "N/A"
-        worst_agent = perf_table.iloc[-1].get('Agent', 'N/A') if len(perf_table) > 0 else "N/A"
-        total_agents = len(perf_table)
-
         body = f"""
         <html>
         <head>
             <style>
                 body {{ font-family: Arial, sans-serif; }}
                 .header {{ background: #4F46E5; padding: 20px; border-radius: 8px; color: white; margin-bottom: 20px; }}
-                .summary {{ background: #F3F4F6; padding: 15px; border-radius: 8px; margin-bottom: 20px; }}
                 table {{ width: 100%; border-collapse: collapse; }}
                 th {{ background: #1F2937; color: white; padding: 10px; text-align: center; }}
                 td {{ padding: 8px; text-align: center; border-bottom: 1px solid #E5E7EB; }}
@@ -1580,18 +1574,6 @@ def send_performance_report_email(perf_table, silence_df, client_name, mentor_em
             <div class="header">
                 <h2>📊 Agent Performance Report</h2>
                 <p><strong>Client:</strong> {client_name} | <strong>Date:</strong> {date.today().strftime('%d/%m/%Y')}</p>
-                <p>Total Agents: {total_agents} | Avg Silence: {avg_overall:.1f}%</p>
-            </div>
-
-            <div class="summary">
-                <table style="width:100%;border:none;">
-                    <tr>
-                        <td style="border:none;text-align:center;"><strong>🏆 Best Performer</strong><br>{best_agent}</td>
-                        <td style="border:none;text-align:center;"><strong>📉 Needs Improvement</strong><br>{worst_agent}</td>
-                        <td style="border:none;text-align:center;"><strong>📊 Avg Silence</strong><br>{avg_overall:.1f}%</td>
-                        <td style="border:none;text-align:center;"><strong>👥 Total Agents</strong><br>{total_agents}</td>
-                    </tr>
-                </table>
             </div>
 
             <h3>📋 Agent Performance Table</h3>
