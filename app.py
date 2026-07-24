@@ -39,6 +39,7 @@ import streamlit as st
 import torch
 import torchaudio
 import groq
+from supabase import create_client, Client
 
 # Try to import silero_vad, fallback to torch.hub if not available
 try:
@@ -47,6 +48,202 @@ try:
 except ImportError:
     SILERO_VAD_AVAILABLE = False
     print("silero_vad package not found, using torch.hub fallback")
+
+# ----------------------------------------------------------------------
+# Supabase Configuration
+# ----------------------------------------------------------------------
+try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+except Exception:
+    # Fallback for local development
+    SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+    SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+
+def get_supabase_client() -> Optional[Client]:
+    """Get Supabase client instance."""
+    if SUPABASE_URL and SUPABASE_KEY:
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
+    return None
+
+supabase = get_supabase_client()
+
+# ----------------------------------------------------------------------
+# Database helper functions
+# ----------------------------------------------------------------------
+def load_clients_from_db():
+    """Load all clients from Supabase."""
+    if not supabase:
+        return {}
+    try:
+        response = supabase.table("clients").select("*").execute()
+        clients = {}
+        for client in response.data:
+            clients[client["name"]] = {
+                "company_id": str(client["company_id"]),
+                "short_max": client.get("short_max", 120),
+                "medium_min": client.get("medium_min", 120),
+                "medium_max": client.get("medium_max", 300),
+                "large_min": client.get("large_min", 300),
+                "extra_large_enabled": client.get("extra_large_enabled", False),
+                "extra_large_min": client.get("extra_large_min", 480),
+            }
+        return clients
+    except Exception as e:
+        print(f"Error loading clients: {e}")
+        return {}
+
+def save_client_to_db(name: str, company_id: str, config: Dict = None):
+    """Save or update client in Supabase."""
+    if not supabase:
+        return False
+    try:
+        data = {
+            "name": name,
+            "company_id": company_id,
+        }
+        if config:
+            data.update(config)
+        
+        # Check if client exists
+        existing = supabase.table("clients").select("id").eq("name", name).execute()
+        if existing.data:
+            supabase.table("clients").update(data).eq("name", name).execute()
+        else:
+            supabase.table("clients").insert(data).execute()
+        return True
+    except Exception as e:
+        print(f"Error saving client: {e}")
+        return False
+
+def delete_client_from_db(name: str):
+    """Delete client from Supabase."""
+    if not supabase:
+        return False
+    try:
+        supabase.table("clients").delete().eq("name", name).execute()
+        return True
+    except Exception as e:
+        print(f"Error deleting client: {e}")
+        return False
+
+def load_mentor_emails_from_db():
+    """Load mentor emails from Supabase."""
+    if not supabase:
+        return []
+    try:
+        response = supabase.table("mentor_emails").select("email").execute()
+        return [row["email"] for row in response.data]
+    except Exception as e:
+        print(f"Error loading mentor emails: {e}")
+        return []
+
+def save_mentor_emails_to_db(emails: List[str]):
+    """Save mentor emails to Supabase (sync)."""
+    if not supabase:
+        return False
+    try:
+        # Get current emails
+        current = supabase.table("mentor_emails").select("email").execute()
+        current_set = {row["email"] for row in current.data}
+        new_set = set(emails)
+        
+        # Add new emails
+        for email in new_set - current_set:
+            supabase.table("mentor_emails").insert({"email": email}).execute()
+        
+        # Remove old emails
+        for email in current_set - new_set:
+            supabase.table("mentor_emails").delete().eq("email", email).execute()
+        
+        return True
+    except Exception as e:
+        print(f"Error saving mentor emails: {e}")
+        return False
+
+def load_smtp_config_from_db():
+    """Load SMTP config from Supabase."""
+    if not supabase:
+        return None
+    try:
+        response = supabase.table("smtp_config").select("*").limit(1).execute()
+        if response.data:
+            return response.data[0]
+        return None
+    except Exception as e:
+        print(f"Error loading SMTP config: {e}")
+        return None
+
+def save_smtp_config_to_db(config: Dict):
+    """Save SMTP config to Supabase."""
+    if not supabase:
+        return False
+    try:
+        existing = supabase.table("smtp_config").select("id").limit(1).execute()
+        if existing.data:
+            supabase.table("smtp_config").update(config).eq("id", existing.data[0]["id"]).execute()
+        else:
+            supabase.table("smtp_config").insert(config).execute()
+        return True
+    except Exception as e:
+        print(f"Error saving SMTP config: {e}")
+        return False
+
+def load_scheduler_config_from_db():
+    """Load scheduler config from Supabase."""
+    if not supabase:
+        return None
+    try:
+        response = supabase.table("scheduler_config").select("*").limit(1).execute()
+        if response.data:
+            return response.data[0]
+        return None
+    except Exception as e:
+        print(f"Error loading scheduler config: {e}")
+        return None
+
+def save_scheduler_config_to_db(config: Dict):
+    """Save scheduler config to Supabase."""
+    if not supabase:
+        return False
+    try:
+        existing = supabase.table("scheduler_config").select("id").limit(1).execute()
+        if existing.data:
+            supabase.table("scheduler_config").update(config).eq("id", existing.data[0]["id"]).execute()
+        else:
+            supabase.table("scheduler_config").insert(config).execute()
+        return True
+    except Exception as e:
+        print(f"Error saving scheduler config: {e}")
+        return False
+
+def load_defaulters_config_from_db():
+    """Load defaulters config from Supabase."""
+    if not supabase:
+        return None
+    try:
+        response = supabase.table("defaulters_config").select("*").limit(1).execute()
+        if response.data:
+            return response.data[0]
+        return None
+    except Exception as e:
+        print(f"Error loading defaulters config: {e}")
+        return None
+
+def save_defaulters_config_to_db(config: Dict):
+    """Save defaulters config to Supabase."""
+    if not supabase:
+        return False
+    try:
+        existing = supabase.table("defaulters_config").select("id").limit(1).execute()
+        if existing.data:
+            supabase.table("defaulters_config").update(config).eq("id", existing.data[0]["id"]).execute()
+        else:
+            supabase.table("defaulters_config").insert(config).execute()
+        return True
+    except Exception as e:
+        print(f"Error saving defaulters config: {e}")
+        return False
 
 # ----------------------------------------------------------------------
 # Page config + theme
@@ -58,6 +255,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# Custom CSS for better UI
 st.markdown("""
 <style>
     #MainMenu {visibility: hidden;}
@@ -70,7 +268,7 @@ st.markdown("""
     .block-container {
         padding-top: 1.5rem;
         padding-bottom: 3rem;
-        max-width: 1100px;
+        max-width: 1200px;
     }
     .callai-hero {
         background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%);
@@ -159,12 +357,6 @@ st.markdown("""
         color: white;
         border: none;
         padding: 0.7rem 1.4rem;
-    }
-    div[role="radiogroup"] label {
-        border: 1px solid #E4E1FF;
-        padding: 6px 14px;
-        border-radius: 20px;
-        margin-right: 6px;
     }
     .status-banner-ok {
         background: #ECFDF5;
@@ -276,33 +468,77 @@ st.markdown("""
         font-weight: 600;
         margin: 8px 0;
     }
+    .tab-button {
+        padding: 10px 24px;
+        border-radius: 8px 8px 0 0;
+        border: none;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+        font-size: 14px;
+    }
+    .tab-button.active {
+        background: #4F46E5;
+        color: white;
+    }
+    .tab-button.inactive {
+        background: #F3F4F6;
+        color: #6B7280;
+    }
+    .tab-button.inactive:hover {
+        background: #E5E7EB;
+    }
+    .tabs-container {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 20px;
+        border-bottom: 2px solid #E5E7EB;
+        padding-bottom: 0;
+    }
+    .client-card {
+        background: #F8F7FF;
+        border: 1px solid #E4E1FF;
+        border-radius: 12px;
+        padding: 16px;
+        margin: 8px 0;
+    }
+    .client-card .client-name {
+        font-weight: 700;
+        font-size: 16px;
+        color: #14142B;
+    }
+    .client-card .client-details {
+        color: #6E7191;
+        font-size: 13px;
+        margin-top: 4px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("""
-<div class="callai-hero">
-    <h1>📞 CallAI · Talk-Time + Sentiment</h1>
-    <p>Pick a client, fetch calls, filter, get Talk-Time / Silence / Dead-Air, and analyse sentiment with Groq Whisper + Groq LLM.</p>
-</div>
-""", unsafe_allow_html=True)
-
-
+# ----------------------------------------------------------------------
+# Helper Functions
+# ----------------------------------------------------------------------
 def render_buffer(container, message="Working..."):
-    """Show a small animated 'buffering' indicator in place of raw progress text."""
+    """Show a small animated 'buffering' indicator."""
     container.markdown(
         f'<div class="buffer-box"><div class="buffer-spinner"></div>'
         f'<div class="buffer-label">{message}</div></div>',
         unsafe_allow_html=True,
     )
 
+def fmt_hms(total_seconds):
+    if total_seconds is None or (isinstance(total_seconds, float) and np.isnan(total_seconds)):
+        return "-"
+    total_seconds = int(round(total_seconds))
+    m, s = divmod(total_seconds, 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
 
 # ----------------------------------------------------------------------
-# CRM + Groq + SMTP configuration
+# CRM + Groq configuration
 # ----------------------------------------------------------------------
-CRM_BASE = "https://crmapi.dialdesk.in"
-LOGIN_URL = f"{CRM_BASE}/auth/login"
-CDR_URL = f"{CRM_BASE}/report/cdr_report"
-
 try:
     CRM_EMAIL = st.secrets["CRM_EMAIL"]
     CRM_PASSWORD = st.secrets["CRM_PASSWORD"]
@@ -315,97 +551,73 @@ try:
 except Exception:
     GROQ_API_KEY = ""
 
-
-def _get_secret(key, default):
-    """Read a value from st.secrets, falling back to `default` if the key is missing."""
-    try:
-        return st.secrets[key]
-    except Exception:
-        return default
-
+CRM_BASE = "https://crmapi.dialdesk.in"
+LOGIN_URL = f"{CRM_BASE}/auth/login"
+CDR_URL = f"{CRM_BASE}/report/cdr_report"
 
 # ----------------------------------------------------------------------
-# SMTP Configuration - UPDATE THESE VALUES
+# Load configuration from Supabase
 # ----------------------------------------------------------------------
-# Default SMTP Config (will be overridden by session state)
-DEFAULT_SMTP_CONFIG = {
-    "host": "mail.dialdesk.net",  # Try this first - updated from mail.domain.com
-    "port": 587,
-    "username": "tickets@dialdesk.net",
-    "password": "DiaL@#433#212",
-    "from_email": "tickets@dialdesk.net",
-    "use_tls": True,
-}
-
-# Alternative SMTP configurations to try automatically
-ALTERNATIVE_SMTP_CONFIGS = [
-    # dialdesk.net servers
-    {"host": "mail.dialdesk.net", "port": 587, "use_tls": True},
-    {"host": "smtp.dialdesk.net", "port": 587, "use_tls": True},
-    {"host": "mail.dialdesk.net", "port": 465, "use_tls": False},
-    {"host": "smtp.dialdesk.net", "port": 465, "use_tls": False},
-    {"host": "mail.dialdesk.net", "port": 25, "use_tls": False},
+def load_all_configs():
+    """Load all configurations from Supabase into session state."""
+    # Load clients
+    db_clients = load_clients_from_db()
+    if db_clients:
+        st.session_state["clients"] = db_clients
+        st.session_state["client_names"] = list(db_clients.keys())
+    else:
+        # Fallback to default clients if Supabase is empty
+        default_clients = {
+            "Weebo": {"company_id": "687", "short_max": 90, "medium_min": 90, "medium_max": 240, "large_min": 240, "extra_large_enabled": False, "extra_large_min": 480},
+            "Hari Om Pvt Ltd": {"company_id": "689", "short_max": 150, "medium_min": 150, "medium_max": 360, "large_min": 360, "extra_large_enabled": False, "extra_large_min": 480},
+            "F1 INFO SOLUTION": {"company_id": "609", "short_max": 120, "medium_min": 120, "medium_max": 300, "large_min": 300, "extra_large_enabled": False, "extra_large_min": 480},
+            "Saatvik": {"company_id": "663", "short_max": 120, "medium_min": 120, "medium_max": 300, "large_min": 300, "extra_large_enabled": False, "extra_large_min": 480},
+            "Fortum Charge": {"company_id": "395", "short_max": 120, "medium_min": 120, "medium_max": 300, "large_min": 300, "extra_large_enabled": False, "extra_large_min": 480},
+            "Alphanso": {"company_id": "629", "short_max": 120, "medium_min": 120, "medium_max": 300, "large_min": 300, "extra_large_enabled": False, "extra_large_min": 480},
+        }
+        st.session_state["clients"] = default_clients
+        st.session_state["client_names"] = list(default_clients.keys())
     
-    # If your domain is actually domain.com
-    {"host": "mail.domain.com", "port": 587, "use_tls": True},
-    {"host": "smtp.domain.com", "port": 587, "use_tls": True},
+    # Load mentor emails
+    db_emails = load_mentor_emails_from_db()
+    if db_emails:
+        st.session_state["mentor_emails"] = db_emails
+    else:
+        st.session_state["mentor_emails"] = ["urvi.wadhwa@teammas.in"]
     
-    # Free SMTP services (you may need to sign up)
-    # SendGrid - free tier (100 emails/day)
-    {"host": "smtp.sendgrid.net", "port": 587, "use_tls": True, "username": "apikey", "password": ""},
-    # Mailgun - free tier
-    {"host": "smtp.mailgun.org", "port": 587, "use_tls": True, "username": "", "password": ""},
-    # Gmail - if you have Gmail
-    {"host": "smtp.gmail.com", "port": 587, "use_tls": True, "username": "", "password": ""},
-]
-
-DEFAULT_MENTOR_EMAILS = [
-    "urvi.wadhwa@teammas.in",
-]
-
-AUTO_SCHEDULE_CLIENTS = ["Weebo", "Hari Om Pvt Ltd"]
-
-CLIENTS = {
-    "Weebo": "687",
-    "Hari Om Pvt Ltd": "689",
-    "F1 INFO SOLUTION": "609",
-    "Saatvik": "663",
-    "Fortum Charge": "395",
-    "Alphanso": "629",
-}
-
-DEFAULT_DURATION_CONFIG = {
-    "short_max": 120,
-    "medium_min": 120,
-    "medium_max": 300,
-    "large_min": 300,
-}
-
-CLIENT_DURATION_CONFIGS = {
-    "Weebo": {
-        "short_max": 90,
-        "medium_min": 90,
-        "medium_max": 240,
-        "large_min": 240,
-    },
-    "Hari Om Pvt Ltd": {
-        "short_max": 150,
-        "medium_min": 150,
-        "medium_max": 360,
-        "large_min": 360,
-    },
-}
-
-
-def get_duration_config(client_name):
-    config = DEFAULT_DURATION_CONFIG.copy()
-    if client_name in CLIENT_DURATION_CONFIGS:
-        config.update(CLIENT_DURATION_CONFIGS[client_name])
-    session_overrides = st.session_state.get("duration_overrides", {})
-    if client_name in session_overrides:
-        config.update(session_overrides[client_name])
-    return config
-
+    # Load SMTP config
+    db_smtp = load_smtp_config_from_db()
+    if db_smtp:
+        st.session_state["smtp_config"] = db_smtp
+    else:
+        st.session_state["smtp_config"] = {
+            "host": "mail.dialdesk.net",
+            "port": 587,
+            "username": "tickets@dialdesk.net",
+            "password": "DiaL@#433#212",
+            "from_email": "tickets@dialdesk.net",
+            "use_tls": True,
+        }
+    
+    # Load scheduler config
+    db_scheduler = load_scheduler_config_from_db()
+    if db_scheduler:
+        st.session_state["scheduler_time"] = db_scheduler.get("scheduler_time", "23:00")
+        st.session_state["scheduler_enabled"] = db_scheduler.get("scheduler_enabled", True)
+        st.session_state["auto_schedule_clients"] = db_scheduler.get("auto_schedule_clients", ["Weebo", "Hari Om Pvt Ltd"])
+    else:
+        st.session_state["scheduler_time"] = "23:00"
+        st.session_state["scheduler_enabled"] = True
+        st.session_state["auto_schedule_clients"] = ["Weebo", "Hari Om Pvt Ltd"]
+    
+    # Load defaulters config
+    db_defaulters = load_defaulters_config_from_db()
+    if db_defaulters:
+        st.session_state["silence_threshold"] = db_defaulters.get("silence_threshold", 30)
+        st.session_state["min_calls_per_agent"] = db_defaulters.get("min_calls_per_agent", 3)
+    else:
+        st.session_state["silence_threshold"] = 30
+        st.session_state["min_calls_per_agent"] = 3
 
 # ----------------------------------------------------------------------
 # Session state defaults
@@ -421,28 +633,26 @@ defaults = {
     "complete_analysis_df": None,
     "agent_silence_by_category_df": None,
     "defaulter_agents_df": None,
-    "mentor_emails": DEFAULT_MENTOR_EMAILS.copy(),
+    "mentor_emails": [],
     "last_email_time": None,
     "scheduler_running": False,
     "email_large_threshold_min": None,
-    "smtp_config": DEFAULT_SMTP_CONFIG.copy(),
+    "smtp_config": {},
     "scheduler_time": "23:00",
     "scheduler_enabled": True,
+    "clients": {},
+    "client_names": [],
+    "silence_threshold": 30,
+    "min_calls_per_agent": 3,
+    "current_tab": "Dashboard",
+    "auto_schedule_clients": [],
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-
-def get_smtp_config():
-    """Get current SMTP config from session state."""
-    return st.session_state.get("smtp_config", DEFAULT_SMTP_CONFIG.copy())
-
-
-def update_smtp_config(new_config):
-    """Update SMTP config in session state."""
-    st.session_state["smtp_config"] = new_config
-
+# Load configs from Supabase
+load_all_configs()
 
 # ----------------------------------------------------------------------
 # CRM functions
@@ -467,13 +677,11 @@ def do_login():
     st.session_state["token"] = token
     return token
 
-
 def get_valid_token():
     if not st.session_state.get("token"):
         with st.spinner("Signing in..."):
             do_login()
     return st.session_state["token"]
-
 
 def fetch_cdr(payload, retry_on_401=True):
     token = get_valid_token()
@@ -488,10 +696,351 @@ def fetch_cdr(payload, retry_on_401=True):
         return fetch_cdr(payload, retry_on_401=False)
     return resp
 
+# ----------------------------------------------------------------------
+# Column mapping + duration parsing
+# ----------------------------------------------------------------------
+COLUMN_CANDIDATES = {
+    "date": ["call_date", "CallDate", "Date"],
+    "time": ["start_time", "Time", "StartTime"],
+    "agent_name": ["full_name", "AgentName", "agent", "Agent Name", "agent_name"],
+    "call_from": ["phone_number", "PhoneNumber", "Call From"],
+    "recording": ["Recording", "RecordingUrl", "RecordingURL", "recording_url"],
+}
+
+def find_column(df, keys):
+    lower_map = {c.lower(): c for c in df.columns}
+    for key in keys:
+        if key.lower() in lower_map:
+            return lower_map[key.lower()]
+    return None
+
+def parse_duration_series_to_seconds(series):
+    s = series.astype(str).str.strip()
+    numeric = pd.to_numeric(s, errors="coerce")
+    needs_time_parse = numeric.isna() & s.str.contains(":", na=False)
+    if needs_time_parse.any():
+        def to_seconds(val):
+            parts = val.split(":")
+            try:
+                parts = [float(p) for p in parts]
+            except ValueError:
+                return np.nan
+            if len(parts) == 3:
+                h, m, sec = parts
+                return h * 3600 + m * 60 + sec
+            elif len(parts) == 2:
+                m, sec = parts
+                return m * 60 + sec
+            return np.nan
+        numeric.loc[needs_time_parse] = s.loc[needs_time_parse].apply(to_seconds)
+    return numeric
+
+def resolve_duration_column(df):
+    candidates_in_order = [
+        ("call_duration", "sec"),
+        ("call_duration1", "sec"),
+        ("CallDurationSecond", "sec"),
+        ("Talkduration", "sec"),
+        ("CallDurationMinute", "min"),
+    ]
+    best_col, best_seconds, best_score = None, None, -1
+    for name, unit in candidates_in_order:
+        col = find_column(df, [name])
+        if not col:
+            continue
+        seconds = parse_duration_series_to_seconds(df[col])
+        if unit == "min":
+            seconds = seconds * 60
+        non_null = seconds.notna().sum()
+        non_zero = (seconds.fillna(0) > 0).sum()
+        score = non_zero
+        if non_null > 0 and score > best_score:
+            best_col, best_seconds, best_score = col, seconds.fillna(0), score
+    return best_col, best_seconds
+
+def filter_out_vdcl_calls(df):
+    if df is None or len(df) == 0:
+        return df, 0
+    agent_col = None
+    for col in df.columns:
+        col_lower = col.lower()
+        if 'agent name' in col_lower or 'agentname' in col_lower or 'full_name' in col_lower or 'agent' in col_lower:
+            agent_col = col
+            break
+    if agent_col is None:
+        return df, 0
+    agent_values = df[agent_col].fillna('').astype(str)
+    mask = agent_values.str.contains('VDCL', case=False, na=False, regex=False)
+    removed_count = int(mask.sum())
+    filtered_df = df[~mask].copy()
+    return filtered_df, removed_count
 
 # ----------------------------------------------------------------------
-# Recording download / resolution
+# Get duration config from clients table
 # ----------------------------------------------------------------------
+def get_duration_config(client_name):
+    clients = st.session_state.get("clients", {})
+    if client_name in clients:
+        data = clients[client_name]
+        if isinstance(data, dict):
+            return {
+                "short_max": data.get("short_max", 120),
+                "medium_min": data.get("medium_min", 120),
+                "medium_max": data.get("medium_max", 300),
+                "large_min": data.get("large_min", 300),
+                "extra_large_enabled": data.get("extra_large_enabled", False),
+                "extra_large_min": data.get("extra_large_min", 480),
+            }
+    return {
+        "short_max": 120,
+        "medium_min": 120,
+        "medium_max": 300,
+        "large_min": 300,
+        "extra_large_enabled": False,
+        "extra_large_min": 480,
+    }
+
+# ----------------------------------------------------------------------
+# Agent analytics
+# ----------------------------------------------------------------------
+def generate_agent_analytics(df, duration_col='_duration_sec', duration_config=None):
+    if df is None or len(df) == 0:
+        return None
+    if duration_config is None:
+        duration_config = get_duration_config(st.session_state.get("cdr_client", ""))
+    agent_col = None
+    for col in ['full_name', 'agent', 'Agent Name', 'AgentName', 'agent_name']:
+        if col in df.columns:
+            agent_col = col
+            break
+    if agent_col is None:
+        return None
+    df_copy = df.copy()
+    if duration_col not in df_copy.columns:
+        return None
+    has_xl = duration_config.get('extra_large_enabled', False)
+    def categorize_call(duration):
+        if duration < duration_config['short_max']:
+            return 'Short'
+        elif duration <= duration_config['medium_max']:
+            return 'Medium'
+        elif has_xl and duration > duration_config['extra_large_min']:
+            return 'Extra Large'
+        else:
+            return 'Large'
+    df_copy['Call_Category'] = df_copy[duration_col].apply(categorize_call)
+    agent_stats = df_copy.groupby(agent_col).agg({
+        duration_col: ['count', 'mean', 'sum'],
+        'Call_Category': lambda x: x.value_counts().to_dict()
+    }).reset_index()
+    agent_stats.columns = ['Agent', 'Total_Calls', 'Avg_Duration', 'Total_Duration', 'Category_Counts']
+    def extract_category_counts(category_dict, category):
+        return category_dict.get(category, 0)
+    agent_stats['Short_Calls'] = agent_stats['Category_Counts'].apply(lambda x: extract_category_counts(x, 'Short'))
+    agent_stats['Medium_Calls'] = agent_stats['Category_Counts'].apply(lambda x: extract_category_counts(x, 'Medium'))
+    agent_stats['Large_Calls'] = agent_stats['Category_Counts'].apply(lambda x: extract_category_counts(x, 'Large'))
+    if has_xl:
+        agent_stats['Extra_Large_Calls'] = agent_stats['Category_Counts'].apply(
+            lambda x: extract_category_counts(x, 'Extra Large')
+        )
+    agent_stats['Short_%'] = (agent_stats['Short_Calls'] / agent_stats['Total_Calls'] * 100).round(2)
+    agent_stats['Medium_%'] = (agent_stats['Medium_Calls'] / agent_stats['Total_Calls'] * 100).round(2)
+    agent_stats['Large_%'] = (agent_stats['Large_Calls'] / agent_stats['Total_Calls'] * 100).round(2)
+    if has_xl:
+        agent_stats['Extra_Large_%'] = (agent_stats['Extra_Large_Calls'] / agent_stats['Total_Calls'] * 100).round(2)
+    agent_stats['Avg_Duration_Formatted'] = agent_stats['Avg_Duration'].apply(fmt_hms)
+    agent_stats['Total_Duration_Formatted'] = agent_stats['Total_Duration'].apply(fmt_hms)
+    agent_stats = agent_stats.drop('Category_Counts', axis=1)
+    agent_stats = agent_stats.sort_values('Total_Calls', ascending=False)
+    agent_stats['Rank'] = range(1, len(agent_stats) + 1)
+    return agent_stats
+
+# ----------------------------------------------------------------------
+# VAD and Audio Processing Functions
+# ----------------------------------------------------------------------
+@st.cache_resource(show_spinner=False)
+def load_silero_vad_model():
+    """Load Silero VAD model using torch.hub with caching."""
+    box = st.empty()
+    render_buffer(box, "Loading voice-detection model (first run only)...")
+    hub_dir = os.path.expanduser("~/.cache/torch/hub")
+    try:
+        os.makedirs(hub_dir, exist_ok=True)
+    except Exception:
+        hub_dir = os.path.join(tempfile.gettempdir(), "torch_hub")
+        os.makedirs(hub_dir, exist_ok=True)
+    torch.hub.set_dir(hub_dir)
+    try:
+        model, utils = torch.hub.load(
+            repo_or_dir='snakers4/silero-vad',
+            model='silero_vad',
+            force_reload=False,
+            trust_repo=True
+        )
+        get_speech_timestamps = utils[0]
+        box.empty()
+        return model, get_speech_timestamps
+    except Exception as e:
+        print(f"Error loading VAD from torch.hub: {e}")
+        box.empty()
+        return None, None
+
+def compute_speech_energy_based(audio, sr, threshold=0.01, min_speech_duration=0.1):
+    """Simple energy-based speech detection as fallback."""
+    if len(audio.shape) > 1:
+        audio = np.mean(audio, axis=1)
+    audio = audio / (np.max(np.abs(audio)) + 1e-6)
+    window_size = int(sr * 0.025)
+    hop_size = int(sr * 0.010)
+    energy = []
+    for i in range(0, len(audio) - window_size, hop_size):
+        window = audio[i:i+window_size]
+        energy.append(np.sqrt(np.mean(window**2)))
+    energy = np.array(energy)
+    is_speech = energy > threshold
+    min_frames = int(min_speech_duration * sr / hop_size)
+    speech_intervals = []
+    start = None
+    for i, speech in enumerate(is_speech):
+        if speech and start is None:
+            start = i * hop_size / sr
+        elif not speech and start is not None:
+            end = i * hop_size / sr
+            if end - start >= min_speech_duration:
+                speech_intervals.append((start, end))
+            start = None
+    if start is not None:
+        end = len(audio) / sr
+        if end - start >= min_speech_duration:
+            speech_intervals.append((start, end))
+    return speech_intervals
+
+def normalize_audio(audio: np.ndarray) -> np.ndarray:
+    audio = audio.astype(np.float32)
+    max_val = np.max(np.abs(audio))
+    if max_val > 1e-6:
+        audio = audio / max_val * 0.95
+    return audio
+
+def process_audio_file(audio_path: str, target_sr: int = 16000) -> Tuple[np.ndarray, int]:
+    try:
+        data, sr = sf.read(audio_path)
+        if len(data.shape) > 1:
+            data = np.mean(data, axis=1)
+        if sr != target_sr:
+            data = librosa.resample(data, orig_sr=sr, target_sr=target_sr)
+            sr = target_sr
+        data = normalize_audio(data)
+        return data, sr
+    except Exception as e:
+        print(f"Error processing audio: {e}")
+        return None, None
+
+def compute_vad_metrics(audio: np.ndarray, sr: int, threshold: float = 0.3, 
+                        dead_air_secs: float = 5.0) -> Dict:
+    total_duration = len(audio) / sr
+    try:
+        model, get_speech_timestamps = load_silero_vad_model()
+        if model is not None and get_speech_timestamps is not None:
+            audio_tensor = torch.from_numpy(audio).float()
+            vad_kwargs = {
+                'sampling_rate': sr,
+                'threshold': threshold,
+                'min_speech_duration_ms': 250,
+                'min_silence_duration_ms': 200,
+                'speech_pad_ms': 400,
+                'window_size_samples': 512,
+            }
+            speech_timestamps = get_speech_timestamps(audio_tensor, model, **vad_kwargs)
+            speech_intervals = []
+            for ts in speech_timestamps:
+                start = ts['start'] / sr
+                end = ts['end'] / sr
+                speech_intervals.append((start, end))
+            return calculate_metrics_from_intervals(speech_intervals, total_duration, dead_air_secs)
+    except Exception as e:
+        print(f"Silero VAD failed, using fallback: {e}")
+    speech_intervals = compute_speech_energy_based(audio, sr, threshold=0.02)
+    return calculate_metrics_from_intervals(speech_intervals, total_duration, dead_air_secs)
+
+def calculate_metrics_from_intervals(speech_intervals: List[Tuple[float, float]], 
+                                    total_duration: float, 
+                                    dead_air_secs: float) -> Dict:
+    if not speech_intervals:
+        return {
+            "talk_time": 0.0,
+            "silence_time": round(total_duration, 2),
+            "dead_air": round(total_duration, 2) if total_duration > dead_air_secs else 0.0,
+            "longest_silence": round(total_duration, 2),
+            "duration": round(total_duration, 2),
+            "speech_segments": []
+        }
+    speech_intervals.sort(key=lambda x: x[0])
+    merged = []
+    for start, end in speech_intervals:
+        if not merged or start > merged[-1][1] + 0.1:
+            merged.append([start, end])
+        else:
+            merged[-1][1] = max(merged[-1][1], end)
+    speech_time = 0.0
+    longest_silence = 0.0
+    dead_air = 0.0
+    prev_end = 0.0
+    for start, end in merged:
+        speech_time += (end - start)
+        silence = max(0.0, start - prev_end)
+        longest_silence = max(longest_silence, silence)
+        if silence > dead_air_secs:
+            dead_air += silence
+        prev_end = end
+    ending_silence = max(0.0, total_duration - prev_end)
+    longest_silence = max(longest_silence, ending_silence)
+    if ending_silence > dead_air_secs:
+        dead_air += ending_silence
+    silence_time = max(0.0, total_duration - speech_time)
+    return {
+        "talk_time": round(speech_time, 2),
+        "silence_time": round(silence_time, 2),
+        "dead_air": round(dead_air, 2),
+        "longest_silence": round(longest_silence, 2),
+        "duration": round(total_duration, 2),
+        "speech_segments": [(round(s, 2), round(e, 2)) for s, e in merged]
+    }
+
+def transcribe_audio_chunk(client: groq.Groq, audio: np.ndarray, sr: int) -> str:
+    try:
+        audio = normalize_audio(audio)
+        buf = io.BytesIO()
+        sf.write(buf, audio, sr, format='WAV')
+        data = buf.getvalue()
+        buf = io.BytesIO(data)
+        prompt = '''
+This conversation is between an agent of a company called Weebo and one of their customers. Weebo is an internet service provider. The call will be about internet services, internet problems, billing, etc.
+
+The call will be code mixed Hindi and english. Bahut sare words Hindi mein honge.
+
+Some frequent words : namaste, hello, namaskar, sir, ma'am, complain, internet, raha, rahi, deta, deti
+'''
+        result = client.audio.transcriptions.create(
+            file=('audio.wav', buf),
+            model='whisper-large-v3-turbo',
+            prompt=prompt,
+            response_format='text',
+            language='hi',
+        )
+        return str(result)
+    except Exception as e:
+        print(f"Transcription error: {e}")
+        return ""
+
+def resolve_audio_url(recording_url):
+    if not isinstance(recording_url, str) or not recording_url.strip():
+        return None
+    recording_url = recording_url.strip()
+    if recording_url.lower().endswith((".mp3", ".wav", ".m4a", ".mp4")):
+        return recording_url
+    return html_recording_to_direct_url(recording_url)
+
 def html_recording_to_direct_url(webform_url, retries=3):
     session = requests.Session()
     headers = {
@@ -503,17 +1052,13 @@ def html_recording_to_direct_url(webform_url, retries=3):
         try:
             resp = session.get(webform_url, headers=headers, timeout=30, stream=True)
             resp.raise_for_status()
-
             content_type = resp.headers.get('content-type', '').lower()
             if 'audio' in content_type or 'video' in content_type:
                 return resp.url
-
             if resp.url.lower().endswith(audio_exts):
                 return resp.url
-
             html = resp.text
             soup = BeautifulSoup(html, "html.parser")
-
             for tag in soup.find_all(["audio", "video"]):
                 src = tag.get("src")
                 if src and any(ext in src.lower() for ext in audio_exts):
@@ -571,494 +1116,7 @@ def html_recording_to_direct_url(webform_url, retries=3):
             time.sleep(1)
     return None
 
-
-def resolve_audio_url(recording_url):
-    if not isinstance(recording_url, str) or not recording_url.strip():
-        return None
-    recording_url = recording_url.strip()
-    if recording_url.lower().endswith((".mp3", ".wav", ".m4a", ".mp4")):
-        return recording_url
-    return html_recording_to_direct_url(recording_url)
-
-
-# ----------------------------------------------------------------------
-# Column mapping + duration parsing
-# ----------------------------------------------------------------------
-COLUMN_CANDIDATES = {
-    "date": ["call_date", "CallDate", "Date"],
-    "time": ["start_time", "Time", "StartTime"],
-    "agent_name": ["full_name", "AgentName", "agent", "Agent Name", "agent_name"],
-    "call_from": ["phone_number", "PhoneNumber", "Call From"],
-    "recording": ["Recording", "RecordingUrl", "RecordingURL", "recording_url"],
-}
-
-
-def find_column(df, keys):
-    lower_map = {c.lower(): c for c in df.columns}
-    for key in keys:
-        if key.lower() in lower_map:
-            return lower_map[key.lower()]
-    return None
-
-
-def parse_duration_series_to_seconds(series):
-    s = series.astype(str).str.strip()
-    numeric = pd.to_numeric(s, errors="coerce")
-    needs_time_parse = numeric.isna() & s.str.contains(":", na=False)
-    if needs_time_parse.any():
-        def to_seconds(val):
-            parts = val.split(":")
-            try:
-                parts = [float(p) for p in parts]
-            except ValueError:
-                return np.nan
-            if len(parts) == 3:
-                h, m, sec = parts
-                return h * 3600 + m * 60 + sec
-            elif len(parts) == 2:
-                m, sec = parts
-                return m * 60 + sec
-            return np.nan
-        numeric.loc[needs_time_parse] = s.loc[needs_time_parse].apply(to_seconds)
-    return numeric
-
-
-def resolve_duration_column(df):
-    candidates_in_order = [
-        ("call_duration", "sec"),
-        ("call_duration1", "sec"),
-        ("CallDurationSecond", "sec"),
-        ("Talkduration", "sec"),
-        ("CallDurationMinute", "min"),
-    ]
-    best_col, best_seconds, best_score = None, None, -1
-    for name, unit in candidates_in_order:
-        col = find_column(df, [name])
-        if not col:
-            continue
-        seconds = parse_duration_series_to_seconds(df[col])
-        if unit == "min":
-            seconds = seconds * 60
-        non_null = seconds.notna().sum()
-        non_zero = (seconds.fillna(0) > 0).sum()
-        score = non_zero
-        if non_null > 0 and score > best_score:
-            best_col, best_seconds, best_score = col, seconds.fillna(0), score
-    return best_col, best_seconds
-
-
-def fmt_hms(total_seconds):
-    if total_seconds is None or (isinstance(total_seconds, float) and np.isnan(total_seconds)):
-        return "-"
-    total_seconds = int(round(total_seconds))
-    m, s = divmod(total_seconds, 60)
-    h, m = divmod(m, 60)
-    if h:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m}:{s:02d}"
-
-
-def filter_out_vdcl_calls(df):
-    if df is None or len(df) == 0:
-        return df, 0
-
-    agent_col = None
-    for col in df.columns:
-        col_lower = col.lower()
-        if 'agent name' in col_lower or 'agentname' in col_lower or 'full_name' in col_lower or 'agent' in col_lower:
-            agent_col = col
-            break
-
-    if agent_col is None:
-        return df, 0
-
-    agent_values = df[agent_col].fillna('').astype(str)
-    mask = agent_values.str.contains('VDCL', case=False, na=False, regex=False)
-    removed_count = int(mask.sum())
-    filtered_df = df[~mask].copy()
-    return filtered_df, removed_count
-
-
-# ----------------------------------------------------------------------
-# Agent analytics (filtered-selection view, Step 3)
-# ----------------------------------------------------------------------
-def generate_agent_analytics(df, duration_col='_duration_sec', duration_config=None):
-    if df is None or len(df) == 0:
-        return None
-
-    if duration_config is None:
-        duration_config = DEFAULT_DURATION_CONFIG
-    agent_col = None
-    for col in ['full_name', 'agent', 'Agent Name', 'AgentName', 'agent_name']:
-        if col in df.columns:
-            agent_col = col
-            break
-
-    if agent_col is None:
-        return None
-
-    df_copy = df.copy()
-    if duration_col not in df_copy.columns:
-        return None
-
-    has_xl = duration_config.get('extra_large_enabled', False)
-
-    def categorize_call(duration):
-        if duration < duration_config['short_max']:
-            return 'Short'
-        elif duration <= duration_config['medium_max']:
-            return 'Medium'
-        elif has_xl and duration > duration_config['extra_large_min']:
-            return 'Extra Large'
-        else:
-            return 'Large'
-
-    df_copy['Call_Category'] = df_copy[duration_col].apply(categorize_call)
-
-    agent_stats = df_copy.groupby(agent_col).agg({
-        duration_col: ['count', 'mean', 'sum'],
-        'Call_Category': lambda x: x.value_counts().to_dict()
-    }).reset_index()
-
-    agent_stats.columns = ['Agent', 'Total_Calls', 'Avg_Duration', 'Total_Duration', 'Category_Counts']
-
-    def extract_category_counts(category_dict, category):
-        return category_dict.get(category, 0)
-
-    agent_stats['Short_Calls'] = agent_stats['Category_Counts'].apply(lambda x: extract_category_counts(x, 'Short'))
-    agent_stats['Medium_Calls'] = agent_stats['Category_Counts'].apply(lambda x: extract_category_counts(x, 'Medium'))
-    agent_stats['Large_Calls'] = agent_stats['Category_Counts'].apply(lambda x: extract_category_counts(x, 'Large'))
-    if has_xl:
-        agent_stats['Extra_Large_Calls'] = agent_stats['Category_Counts'].apply(
-            lambda x: extract_category_counts(x, 'Extra Large')
-        )
-
-    agent_stats['Short_%'] = (agent_stats['Short_Calls'] / agent_stats['Total_Calls'] * 100).round(2)
-    agent_stats['Medium_%'] = (agent_stats['Medium_Calls'] / agent_stats['Total_Calls'] * 100).round(2)
-    agent_stats['Large_%'] = (agent_stats['Large_Calls'] / agent_stats['Total_Calls'] * 100).round(2)
-    if has_xl:
-        agent_stats['Extra_Large_%'] = (agent_stats['Extra_Large_Calls'] / agent_stats['Total_Calls'] * 100).round(2)
-
-    agent_stats['Avg_Duration_Formatted'] = agent_stats['Avg_Duration'].apply(fmt_hms)
-    agent_stats['Total_Duration_Formatted'] = agent_stats['Total_Duration'].apply(fmt_hms)
-    agent_stats = agent_stats.drop('Category_Counts', axis=1)
-    agent_stats = agent_stats.sort_values('Total_Calls', ascending=False)
-    agent_stats['Rank'] = range(1, len(agent_stats) + 1)
-
-    return agent_stats
-
-
-# ----------------------------------------------------------------------
-# VAD and Audio Processing Functions
-# ----------------------------------------------------------------------
-@st.cache_resource(show_spinner=False)
-def load_silero_vad_model():
-    """Load Silero VAD model using torch.hub with caching."""
-    box = st.empty()
-    render_buffer(box, "Loading voice-detection model (first run only)...")
-
-    # Set torch hub directory
-    hub_dir = os.path.expanduser("~/.cache/torch/hub")
-    try:
-        os.makedirs(hub_dir, exist_ok=True)
-    except Exception:
-        hub_dir = os.path.join(tempfile.gettempdir(), "torch_hub")
-        os.makedirs(hub_dir, exist_ok=True)
-    torch.hub.set_dir(hub_dir)
-
-    try:
-        # Try loading from torch.hub
-        model, utils = torch.hub.load(
-            repo_or_dir='snakers4/silero-vad',
-            model='silero_vad',
-            force_reload=False,
-            trust_repo=True
-        )
-        get_speech_timestamps = utils[0]
-        box.empty()
-        return model, get_speech_timestamps
-    except Exception as e:
-        print(f"Error loading VAD from torch.hub: {e}")
-        box.empty()
-        return None, None
-
-
-def compute_speech_energy_based(audio, sr, threshold=0.01, min_speech_duration=0.1):
-    """Simple energy-based speech detection as fallback."""
-    # Convert to mono if stereo
-    if len(audio.shape) > 1:
-        audio = np.mean(audio, axis=1)
-    
-    # Normalize
-    audio = audio / (np.max(np.abs(audio)) + 1e-6)
-    
-    # Compute energy in windows
-    window_size = int(sr * 0.025)  # 25ms windows
-    hop_size = int(sr * 0.010)     # 10ms hop
-    
-    energy = []
-    for i in range(0, len(audio) - window_size, hop_size):
-        window = audio[i:i+window_size]
-        energy.append(np.sqrt(np.mean(window**2)))
-    
-    energy = np.array(energy)
-    
-    # Find speech regions
-    is_speech = energy > threshold
-    min_frames = int(min_speech_duration * sr / hop_size)
-    
-    # Merge speech regions
-    speech_intervals = []
-    start = None
-    for i, speech in enumerate(is_speech):
-        if speech and start is None:
-            start = i * hop_size / sr
-        elif not speech and start is not None:
-            end = i * hop_size / sr
-            if end - start >= min_speech_duration:
-                speech_intervals.append((start, end))
-            start = None
-    
-    if start is not None:
-        end = len(audio) / sr
-        if end - start >= min_speech_duration:
-            speech_intervals.append((start, end))
-    
-    return speech_intervals
-
-
-def normalize_audio(audio: np.ndarray) -> np.ndarray:
-    """Normalize audio to prevent clipping."""
-    audio = audio.astype(np.float32)
-    max_val = np.max(np.abs(audio))
-    if max_val > 1e-6:
-        audio = audio / max_val * 0.95
-    return audio
-
-
-def process_audio_file(audio_path: str, target_sr: int = 16000) -> Tuple[np.ndarray, int]:
-    """Load and process audio file, convert to mono if needed."""
-    try:
-        data, sr = sf.read(audio_path)
-        
-        # Convert to mono if stereo
-        if len(data.shape) > 1:
-            data = np.mean(data, axis=1)
-        
-        # Resample if needed
-        if sr != target_sr:
-            data = librosa.resample(data, orig_sr=sr, target_sr=target_sr)
-            sr = target_sr
-        
-        # Normalize
-        data = normalize_audio(data)
-        
-        return data, sr
-    except Exception as e:
-        print(f"Error processing audio: {e}")
-        return None, None
-
-
-def compute_vad_metrics(audio: np.ndarray, sr: int, threshold: float = 0.3, 
-                        dead_air_secs: float = 5.0) -> Dict:
-    """Compute VAD metrics using Silero VAD or fallback."""
-    total_duration = len(audio) / sr
-    
-    try:
-        # Try Silero VAD first
-        model, get_speech_timestamps = load_silero_vad_model()
-        
-        if model is not None and get_speech_timestamps is not None:
-            # Use Silero VAD
-            audio_tensor = torch.from_numpy(audio).float()
-            
-            vad_kwargs = {
-                'sampling_rate': sr,
-                'threshold': threshold,
-                'min_speech_duration_ms': 250,
-                'min_silence_duration_ms': 200,
-                'speech_pad_ms': 400,
-                'window_size_samples': 512,
-            }
-            
-            speech_timestamps = get_speech_timestamps(audio_tensor, model, **vad_kwargs)
-            
-            # Convert to seconds
-            speech_intervals = []
-            for ts in speech_timestamps:
-                start = ts['start'] / sr
-                end = ts['end'] / sr
-                speech_intervals.append((start, end))
-            
-            # Calculate metrics
-            return calculate_metrics_from_intervals(speech_intervals, total_duration, dead_air_secs)
-        
-    except Exception as e:
-        print(f"Silero VAD failed, using fallback: {e}")
-    
-    # Fallback to energy-based detection
-    speech_intervals = compute_speech_energy_based(audio, sr, threshold=0.02)
-    return calculate_metrics_from_intervals(speech_intervals, total_duration, dead_air_secs)
-
-
-def calculate_metrics_from_intervals(speech_intervals: List[Tuple[float, float]], 
-                                    total_duration: float, 
-                                    dead_air_secs: float) -> Dict:
-    """Calculate talk time, silence, and dead air from speech intervals."""
-    if not speech_intervals:
-        return {
-            "talk_time": 0.0,
-            "silence_time": round(total_duration, 2),
-            "dead_air": round(total_duration, 2) if total_duration > dead_air_secs else 0.0,
-            "longest_silence": round(total_duration, 2),
-            "duration": round(total_duration, 2),
-            "speech_segments": []
-        }
-    
-    # Sort and merge overlapping intervals
-    speech_intervals.sort(key=lambda x: x[0])
-    merged = []
-    for start, end in speech_intervals:
-        if not merged or start > merged[-1][1] + 0.1:  # Small gap tolerance
-            merged.append([start, end])
-        else:
-            merged[-1][1] = max(merged[-1][1], end)
-    
-    # Calculate metrics
-    speech_time = 0.0
-    longest_silence = 0.0
-    dead_air = 0.0
-    prev_end = 0.0
-    
-    for start, end in merged:
-        speech_time += (end - start)
-        
-        # Calculate silence before this segment
-        silence = max(0.0, start - prev_end)
-        longest_silence = max(longest_silence, silence)
-        if silence > dead_air_secs:
-            dead_air += silence
-        prev_end = end
-    
-    # Final silence
-    ending_silence = max(0.0, total_duration - prev_end)
-    longest_silence = max(longest_silence, ending_silence)
-    if ending_silence > dead_air_secs:
-        dead_air += ending_silence
-    
-    silence_time = max(0.0, total_duration - speech_time)
-    
-    return {
-        "talk_time": round(speech_time, 2),
-        "silence_time": round(silence_time, 2),
-        "dead_air": round(dead_air, 2),
-        "longest_silence": round(longest_silence, 2),
-        "duration": round(total_duration, 2),
-        "speech_segments": [(round(s, 2), round(e, 2)) for s, e in merged]
-    }
-
-
-def transcribe_audio_chunk(client: groq.Groq, audio: np.ndarray, sr: int) -> str:
-    """Transcribe a single audio chunk using Groq Whisper."""
-    try:
-        # Normalize audio
-        audio = normalize_audio(audio)
-        
-        # Create WAV in memory
-        buf = io.BytesIO()
-        sf.write(buf, audio, sr, format='WAV')
-        data = buf.getvalue()
-        buf = io.BytesIO(data)
-        
-        # Prompt for code-mixed Hindi-English
-        prompt = '''
-This conversation is between an agent of a company called Weebo and one of their customers. Weebo is an internet service provider. The call will be about internet services, internet problems, billing, etc.
-
-The call will be code mixed Hindi and english. Bahut sare words Hindi mein honge.
-
-Some frequent words : namaste, hello, namaskar, sir, ma'am, complain, internet, raha, rahi, deta, deti
-'''
-        
-        result = client.audio.transcriptions.create(
-            file=('audio.wav', buf),
-            model='whisper-large-v3-turbo',
-            prompt=prompt,
-            response_format='text',
-            language='hi',
-        )
-        
-        return str(result)
-    except Exception as e:
-        print(f"Transcription error: {e}")
-        return ""
-
-
-def process_recording_metrics_only(rec_url, vad_threshold, dead_air_secs, tmpdir, tag):
-    """Process recording for metrics only (no transcription)."""
-    metrics = {"talk_time": 0.0, "silence_time": 0.0, "dead_air": 0.0, 
-               "longest_silence": 0.0, "duration": 0.0}
-    debug_status = "OK"
-    actual_mp3 = None
-    mp3_path = os.path.join(tmpdir, f"{tag}.mp3")
-    wav_path = os.path.join(tmpdir, f"{tag}.wav")
-
-    try:
-        if not rec_url:
-            return metrics, "No recording URL in this row", None
-
-        actual_mp3 = resolve_audio_url(rec_url)
-        if not actual_mp3:
-            return metrics, "Could not resolve audio URL", None
-
-        # Download audio
-        r = requests.get(actual_mp3, timeout=120, stream=True)
-        if r.status_code != 200:
-            return metrics, f"Download failed: HTTP {r.status_code}", actual_mp3
-        
-        with open(mp3_path, "wb") as f:
-            for chunk in r.iter_content(8192):
-                if chunk:
-                    f.write(chunk)
-        
-        if not os.path.exists(mp3_path) or os.path.getsize(mp3_path) == 0:
-            return metrics, "Downloaded file is empty", actual_mp3
-
-        # Convert to WAV
-        ffmpeg_cmd = shutil.which("ffmpeg") or "ffmpeg"
-        ff = subprocess.run(
-            [ffmpeg_cmd, "-y", "-i", mp3_path, "-acodec", "pcm_s16le", "-ar", "16000", 
-             "-ac", "1", wav_path],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        )
-        
-        if ff.returncode != 0 or not os.path.exists(wav_path):
-            err_tail = ff.stderr.decode(errors="ignore")[-300:]
-            return metrics, f"FFmpeg conversion failed: {err_tail.strip()}", actual_mp3
-
-        # Load audio
-        audio_data, sr = process_audio_file(wav_path)
-        if audio_data is None:
-            return metrics, "Failed to load audio", actual_mp3
-
-        # Compute VAD metrics
-        metrics = compute_vad_metrics(audio_data, sr, vad_threshold, dead_air_secs)
-        return metrics, "OK", actual_mp3
-
-    except requests.exceptions.RequestException as e:
-        return metrics, f"Network error: {str(e)[:100]}", actual_mp3
-    except Exception as e:
-        return metrics, f"Processing error: {str(e)[:100]}", actual_mp3
-    finally:
-        for path in [mp3_path, wav_path]:
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                except Exception:
-                    pass
-
-
 def process_recording_with_transcription(rec_url, vad_threshold, dead_air_secs, tmpdir, tag):
-    """Process recording with full VAD + transcription."""
     metrics = {"talk_time": 0.0, "silence_time": 0.0, "dead_air": 0.0, 
                "longest_silence": 0.0, "duration": 0.0}
     debug_status = "OK"
@@ -1067,83 +1125,59 @@ def process_recording_with_transcription(rec_url, vad_threshold, dead_air_secs, 
     actual_mp3 = None
     mp3_path = os.path.join(tmpdir, f"{tag}.mp3")
     wav_path = os.path.join(tmpdir, f"{tag}.wav")
-
     try:
         if not rec_url:
             return metrics, "No recording URL in this row", None, "", "Neutral"
-
         actual_mp3 = resolve_audio_url(rec_url)
         if not actual_mp3:
             return metrics, "Could not resolve audio URL", None, "", "Neutral"
-
-        # Download audio
         r = requests.get(actual_mp3, timeout=120, stream=True)
         if r.status_code != 200:
             return metrics, f"Download failed: HTTP {r.status_code}", actual_mp3, "", "Neutral"
-        
         with open(mp3_path, "wb") as f:
             for chunk in r.iter_content(8192):
                 if chunk:
                     f.write(chunk)
-        
         if not os.path.exists(mp3_path) or os.path.getsize(mp3_path) == 0:
             return metrics, "Downloaded file is empty", actual_mp3, "", "Neutral"
-
-        # Convert to WAV
         ffmpeg_cmd = shutil.which("ffmpeg") or "ffmpeg"
         ff = subprocess.run(
             [ffmpeg_cmd, "-y", "-i", mp3_path, "-acodec", "pcm_s16le", "-ar", "16000", 
              "-ac", "1", wav_path],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
-        
         if ff.returncode != 0 or not os.path.exists(wav_path):
             err_tail = ff.stderr.decode(errors="ignore")[-300:]
             return metrics, f"FFmpeg conversion failed: {err_tail.strip()}", actual_mp3, "", "Neutral"
-
-        # Load audio
         audio_data, sr = process_audio_file(wav_path)
         if audio_data is None:
             return metrics, "Failed to load audio", actual_mp3, "", "Neutral"
-
-        # Compute VAD metrics
         vad_result = compute_vad_metrics(audio_data, sr, vad_threshold, dead_air_secs)
         metrics = vad_result
-        
-        # If we have API key and speech was detected, transcribe
         if GROQ_API_KEY and vad_result.get("talk_time", 0) > 1.0:
             try:
-                # Get speech segments from VAD result
                 speech_segments = vad_result.get("speech_segments", [])
                 if speech_segments:
                     client = groq.Groq(api_key=GROQ_API_KEY)
                     transcript_parts = []
-                    
-                    for start, end in speech_segments[:5]:  # Limit to first 5 segments
+                    for start, end in speech_segments[:5]:
                         start_sample = int(start * sr)
                         end_sample = int(end * sr)
                         segment = audio_data[start_sample:end_sample]
-                        
-                        if len(segment) > sr * 0.5:  # At least 0.5 seconds
+                        if len(segment) > sr * 0.5:
                             text = transcribe_audio_chunk(client, segment, sr)
                             if text:
                                 transcript_parts.append(text)
-                    
                     transcript = "\n\n".join(transcript_parts)
-                    
-                    # Analyze sentiment if we have transcript
                     if transcript:
                         sentiment = analyze_sentiment(transcript)
                 else:
-                    # Try transcribing the whole audio if no segments detected
-                    if len(audio_data) > sr * 1.0:  # At least 1 second
+                    if len(audio_data) > sr * 1.0:
                         client = groq.Groq(api_key=GROQ_API_KEY)
                         transcript = transcribe_audio_chunk(client, audio_data, sr)
                         if transcript:
                             sentiment = analyze_sentiment(transcript)
-                
                 debug_status = "OK"
-                
             except Exception as e:
                 debug_status = f"Transcription error: {str(e)[:100]}"
         else:
@@ -1151,9 +1185,7 @@ def process_recording_with_transcription(rec_url, vad_threshold, dead_air_secs, 
                 debug_status = "No API Key"
             else:
                 debug_status = "No speech detected"
-
         return metrics, debug_status, actual_mp3, transcript, sentiment
-
     except requests.exceptions.RequestException as e:
         return metrics, f"Network error: {str(e)[:100]}", actual_mp3, "", "Neutral"
     except Exception as e:
@@ -1166,9 +1198,7 @@ def process_recording_with_transcription(rec_url, vad_threshold, dead_air_secs, 
                 except Exception:
                     pass
 
-
 def analyze_sentiment(text: str) -> str:
-    """Analyze sentiment of transcribed text using Groq LLM."""
     if not text or not text.strip():
         return "Neutral"
     if not GROQ_API_KEY:
@@ -1199,188 +1229,62 @@ def analyze_sentiment(text: str) -> str:
     except Exception:
         return "Neutral"
 
-
-# ----------------------------------------------------------------------
-# Complete call analysis (all calls) 
-# ----------------------------------------------------------------------
-def detect_defaulters_simple(silence_df, duration_config, silence_threshold=30, min_calls=3):
-    if silence_df is None or len(silence_df) == 0:
-        return None
-
-    short_max = duration_config.get('short_max', 120)
-    medium_max = duration_config.get('medium_max', 300)
-
-    def categorize_by_duration(duration):
-        if duration is None or pd.isna(duration):
-            return 'Unknown'
-        if duration < short_max:
-            return 'Short'
-        elif duration <= medium_max:
-            return 'Medium'
-        else:
-            return 'Large'
-
-    silence_df_copy = silence_df.copy()
-    silence_df_copy['Duration (sec)'] = pd.to_numeric(silence_df_copy['Duration (sec)'], errors='coerce')
-    silence_df_copy['Category'] = silence_df_copy['Duration (sec)'].apply(categorize_by_duration)
-    silence_df_copy = silence_df_copy[silence_df_copy['Category'] != 'Unknown']
-
-    if len(silence_df_copy) == 0:
-        return None
-
-    agent_data = []
-
-    for agent in silence_df_copy['Agent Name'].unique():
-        agent_calls = silence_df_copy[silence_df_copy['Agent Name'] == agent]
-        total_calls = len(agent_calls)
-
-        if total_calls < min_calls:
-            continue
-
-        overall_avg_silence = agent_calls['Silence %'].mean()
-
-        short_calls = agent_calls[agent_calls['Category'] == 'Short']
-        medium_calls = agent_calls[agent_calls['Category'] == 'Medium']
-        large_calls = agent_calls[agent_calls['Category'] == 'Large']
-
-        short_avg_silence = short_calls['Silence %'].mean() if len(short_calls) > 0 else 0
-        medium_avg_silence = medium_calls['Silence %'].mean() if len(medium_calls) > 0 else 0
-        large_avg_silence = large_calls['Silence %'].mean() if len(large_calls) > 0 else 0
-
-        is_defaulter = (overall_avg_silence > silence_threshold) or (short_avg_silence > silence_threshold)
-
-        if is_defaulter:
-            agent_data.append({
-                'Agent': agent,
-                'Total_Calls': total_calls,
-                'Short_Calls': len(short_calls),
-                'Short_Silence_%': round(short_avg_silence, 1),
-                'Medium_Calls': len(medium_calls),
-                'Medium_Silence_%': round(medium_avg_silence, 1),
-                'Large_Calls': len(large_calls),
-                'Large_Silence_%': round(large_avg_silence, 1),
-                'Overall_Silence_%': round(overall_avg_silence, 1),
-            })
-
-    if len(agent_data) == 0:
-        return None
-
-    df_defaulters = pd.DataFrame(agent_data)
-    df_defaulters = df_defaulters.sort_values('Overall_Silence_%', ascending=False)
-    df_defaulters['Rank'] = range(1, len(df_defaulters) + 1)
-
-    return df_defaulters
-
-
-def analyze_agent_silence_by_category(silence_df, duration_config):
-    """3-bucket (Short/Medium/Large) breakdown used for the on-screen dashboard."""
-    if silence_df is None or len(silence_df) == 0:
-        return None
-
-    short_max = duration_config.get('short_max', 120)
-    medium_max = duration_config.get('medium_max', 300)
-
-    def categorize_by_duration(duration):
-        if duration is None or pd.isna(duration):
-            return 'Unknown'
-        if duration < short_max:
-            return 'Short'
-        elif duration <= medium_max:
-            return 'Medium'
-        else:
-            return 'Large'
-
-    silence_df_copy = silence_df.copy()
-    silence_df_copy['Duration (sec)'] = pd.to_numeric(silence_df_copy['Duration (sec)'], errors='coerce')
-    silence_df_copy['Category'] = silence_df_copy['Duration (sec)'].apply(categorize_by_duration)
-
-    agent_category_silence = silence_df_copy.groupby(['Agent Name', 'Category']).agg({
-        'Silence %': ['mean', 'count'],
-    }).reset_index()
-
-    agent_category_silence.columns = ['Agent', 'Category', 'Avg_Silence_%', 'Call_Count']
-
-    pivot_df = agent_category_silence.pivot_table(
-        index='Agent', columns='Category', values=['Avg_Silence_%', 'Call_Count'], fill_value=0
-    ).reset_index()
-
-    pivot_df.columns = ['_'.join(col).strip() if col[1] else col[0] for col in pivot_df.columns.values]
-    pivot_df = pivot_df.rename(columns={'Agent_': 'Agent'})
-
-    for cat in ['Short', 'Medium', 'Large']:
-        if f'Avg_Silence_%_{cat}' not in pivot_df.columns:
-            pivot_df[f'Avg_Silence_%_{cat}'] = 0
-        if f'Call_Count_{cat}' not in pivot_df.columns:
-            pivot_df[f'Call_Count_{cat}'] = 0
-
-    agent_overall = silence_df_copy.groupby('Agent Name').agg({
-        'Silence %': 'mean', 'Silence Time (sec)': 'sum', 'Duration (sec)': 'sum'
-    }).reset_index()
-    agent_overall.columns = ['Agent', 'Overall_Avg_Silence_%', 'Total_Silence_Time', 'Total_Duration']
-
-    pivot_df = pivot_df.merge(agent_overall, on='Agent', how='left')
-    pivot_df['Total_Calls'] = pivot_df['Call_Count_Short'] + pivot_df['Call_Count_Medium'] + pivot_df['Call_Count_Large']
-    pivot_df = pivot_df.sort_values('Overall_Avg_Silence_%', ascending=False).reset_index(drop=True)
-    pivot_df['Rank'] = range(1, len(pivot_df) + 1)
-
-    return pivot_df
-
-
-def categorize_duration_4(duration, short_max, medium_max, large_threshold_sec):
-    """Short / Medium / Long / Large bucket used for the emailed performance report."""
-    if duration is None or pd.isna(duration):
-        return "Unknown"
-    if duration < short_max:
-        return "Short"
-    if duration <= medium_max:
-        return "Medium"
-    if duration <= large_threshold_sec:
-        return "Long"
-    return "Large"
-
-
-def build_agent_performance_table(silence_df, short_max, medium_max, large_threshold_sec):
-    """Per-agent Short/Medium/Long/Large call counts with average silence % for each bucket."""
-    if silence_df is None or len(silence_df) == 0:
-        return None
-
-    df = silence_df.copy()
-    df["Duration (sec)"] = pd.to_numeric(df["Duration (sec)"], errors="coerce")
-    df["Category"] = df["Duration (sec)"].apply(
-        lambda d: categorize_duration_4(d, short_max, medium_max, large_threshold_sec)
-    )
-    df = df[df["Category"] != "Unknown"]
-    if len(df) == 0:
-        return None
-
-    rows = []
-    for agent, g in df.groupby("Agent Name"):
-        row = {"Agent": agent, "Total_Calls": len(g), "Overall_Silence": round(g["Silence %"].mean(), 1)}
-        for cat in ["Short", "Medium", "Long", "Large"]:
-            sub = g[g["Category"] == cat]
-            row[f"{cat}_Calls"] = len(sub)
-            row[f"{cat}_Silence"] = round(sub["Silence %"].mean(), 1) if len(sub) else 0.0
-        rows.append(row)
-
-    out = pd.DataFrame(rows).sort_values("Overall_Silence", ascending=False).reset_index(drop=True)
-    out["Rank"] = range(1, len(out) + 1)
-    return out
-
-
-def default_large_threshold_min(duration_config):
-    return round(duration_config["medium_max"] / 60 + 3, 1)
-
+def process_recording_metrics_only(rec_url, vad_threshold, dead_air_secs, tmpdir, tag):
+    metrics = {"talk_time": 0.0, "silence_time": 0.0, "dead_air": 0.0, 
+               "longest_silence": 0.0, "duration": 0.0}
+    debug_status = "OK"
+    actual_mp3 = None
+    mp3_path = os.path.join(tmpdir, f"{tag}.mp3")
+    wav_path = os.path.join(tmpdir, f"{tag}.wav")
+    try:
+        if not rec_url:
+            return metrics, "No recording URL in this row", None
+        actual_mp3 = resolve_audio_url(rec_url)
+        if not actual_mp3:
+            return metrics, "Could not resolve audio URL", None
+        r = requests.get(actual_mp3, timeout=120, stream=True)
+        if r.status_code != 200:
+            return metrics, f"Download failed: HTTP {r.status_code}", actual_mp3
+        with open(mp3_path, "wb") as f:
+            for chunk in r.iter_content(8192):
+                if chunk:
+                    f.write(chunk)
+        if not os.path.exists(mp3_path) or os.path.getsize(mp3_path) == 0:
+            return metrics, "Downloaded file is empty", actual_mp3
+        ffmpeg_cmd = shutil.which("ffmpeg") or "ffmpeg"
+        ff = subprocess.run(
+            [ffmpeg_cmd, "-y", "-i", mp3_path, "-acodec", "pcm_s16le", "-ar", "16000", 
+             "-ac", "1", wav_path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        if ff.returncode != 0 or not os.path.exists(wav_path):
+            err_tail = ff.stderr.decode(errors="ignore")[-300:]
+            return metrics, f"FFmpeg conversion failed: {err_tail.strip()}", actual_mp3
+        audio_data, sr = process_audio_file(wav_path)
+        if audio_data is None:
+            return metrics, "Failed to load audio", actual_mp3
+        metrics = compute_vad_metrics(audio_data, sr, vad_threshold, dead_air_secs)
+        return metrics, "OK", actual_mp3
+    except requests.exceptions.RequestException as e:
+        return metrics, f"Network error: {str(e)[:100]}", actual_mp3
+    except Exception as e:
+        return metrics, f"Processing error: {str(e)[:100]}", actual_mp3
+    finally:
+        for path in [mp3_path, wav_path]:
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
 
 def run_complete_call_analysis(all_calls_df, col_recording, col_agent, col_date, col_time, col_phone,
                                 vad_threshold, dead_air_secs, duration_config,
                                 silence_threshold=30, min_calls=3):
-    """Runs VAD on ALL calls, returns call-level data, the on-screen performance table, and defaulters."""
     progress = st.progress(0)
     buffer_box = st.empty()
     render_buffer(buffer_box, "Analyzing calls...")
     total = len(all_calls_df)
     silence_rows = []
-
     with tempfile.TemporaryDirectory() as tmpdir:
         for i, (_, row) in enumerate(all_calls_df.iterrows()):
             metrics, debug_status, actual_mp3 = process_recording_metrics_only(
@@ -1389,16 +1293,13 @@ def run_complete_call_analysis(all_calls_df, col_recording, col_agent, col_date,
             dur = metrics.get("duration")
             sil = metrics.get("silence_time")
             silence_pct = round((sil / dur * 100), 1) if dur and dur > 0 and sil is not None else None
-
             date_val = row.get(col_date) if col_date else None
             time_val = row.get(col_time) if col_time else None
-
             if date_val and pd.notna(date_val):
                 try:
                     date_val = pd.to_datetime(date_val).strftime("%d/%m/%Y")
                 except Exception:
                     pass
-
             silence_rows.append({
                 "Date": date_val,
                 "Time": time_val,
@@ -1413,95 +1314,181 @@ def run_complete_call_analysis(all_calls_df, col_recording, col_agent, col_date,
                 "Actual MP3": actual_mp3,
             })
             progress.progress((i + 1) / total)
-
     buffer_box.empty()
     progress.empty()
     silence_df = pd.DataFrame(silence_rows)
-
     perf_df = analyze_agent_silence_by_category(silence_df, duration_config)
     defaulters_df = detect_defaulters_simple(silence_df, duration_config, silence_threshold, min_calls)
-
     return silence_df, perf_df, defaulters_df
 
+def detect_defaulters_simple(silence_df, duration_config, silence_threshold=30, min_calls=3):
+    if silence_df is None or len(silence_df) == 0:
+        return None
+    short_max = duration_config.get('short_max', 120)
+    medium_max = duration_config.get('medium_max', 300)
+    def categorize_by_duration(duration):
+        if duration is None or pd.isna(duration):
+            return 'Unknown'
+        if duration < short_max:
+            return 'Short'
+        elif duration <= medium_max:
+            return 'Medium'
+        else:
+            return 'Large'
+    silence_df_copy = silence_df.copy()
+    silence_df_copy['Duration (sec)'] = pd.to_numeric(silence_df_copy['Duration (sec)'], errors='coerce')
+    silence_df_copy['Category'] = silence_df_copy['Duration (sec)'].apply(categorize_by_duration)
+    silence_df_copy = silence_df_copy[silence_df_copy['Category'] != 'Unknown']
+    if len(silence_df_copy) == 0:
+        return None
+    agent_data = []
+    for agent in silence_df_copy['Agent Name'].unique():
+        agent_calls = silence_df_copy[silence_df_copy['Agent Name'] == agent]
+        total_calls = len(agent_calls)
+        if total_calls < min_calls:
+            continue
+        overall_avg_silence = agent_calls['Silence %'].mean()
+        short_calls = agent_calls[agent_calls['Category'] == 'Short']
+        medium_calls = agent_calls[agent_calls['Category'] == 'Medium']
+        large_calls = agent_calls[agent_calls['Category'] == 'Large']
+        short_avg_silence = short_calls['Silence %'].mean() if len(short_calls) > 0 else 0
+        medium_avg_silence = medium_calls['Silence %'].mean() if len(medium_calls) > 0 else 0
+        large_avg_silence = large_calls['Silence %'].mean() if len(large_calls) > 0 else 0
+        is_defaulter = (overall_avg_silence > silence_threshold) or (short_avg_silence > silence_threshold)
+        if is_defaulter:
+            agent_data.append({
+                'Agent': agent,
+                'Total_Calls': total_calls,
+                'Short_Calls': len(short_calls),
+                'Short_Silence_%': round(short_avg_silence, 1),
+                'Medium_Calls': len(medium_calls),
+                'Medium_Silence_%': round(medium_avg_silence, 1),
+                'Large_Calls': len(large_calls),
+                'Large_Silence_%': round(large_avg_silence, 1),
+                'Overall_Silence_%': round(overall_avg_silence, 1),
+            })
+    if len(agent_data) == 0:
+        return None
+    df_defaulters = pd.DataFrame(agent_data)
+    df_defaulters = df_defaulters.sort_values('Overall_Silence_%', ascending=False)
+    df_defaulters['Rank'] = range(1, len(df_defaulters) + 1)
+    return df_defaulters
+
+def analyze_agent_silence_by_category(silence_df, duration_config):
+    if silence_df is None or len(silence_df) == 0:
+        return None
+    short_max = duration_config.get('short_max', 120)
+    medium_max = duration_config.get('medium_max', 300)
+    def categorize_by_duration(duration):
+        if duration is None or pd.isna(duration):
+            return 'Unknown'
+        if duration < short_max:
+            return 'Short'
+        elif duration <= medium_max:
+            return 'Medium'
+        else:
+            return 'Large'
+    silence_df_copy = silence_df.copy()
+    silence_df_copy['Duration (sec)'] = pd.to_numeric(silence_df_copy['Duration (sec)'], errors='coerce')
+    silence_df_copy['Category'] = silence_df_copy['Duration (sec)'].apply(categorize_by_duration)
+    agent_category_silence = silence_df_copy.groupby(['Agent Name', 'Category']).agg({
+        'Silence %': ['mean', 'count'],
+    }).reset_index()
+    agent_category_silence.columns = ['Agent', 'Category', 'Avg_Silence_%', 'Call_Count']
+    pivot_df = agent_category_silence.pivot_table(
+        index='Agent', columns='Category', values=['Avg_Silence_%', 'Call_Count'], fill_value=0
+    ).reset_index()
+    pivot_df.columns = ['_'.join(col).strip() if col[1] else col[0] for col in pivot_df.columns.values]
+    pivot_df = pivot_df.rename(columns={'Agent_': 'Agent'})
+    for cat in ['Short', 'Medium', 'Large']:
+        if f'Avg_Silence_%_{cat}' not in pivot_df.columns:
+            pivot_df[f'Avg_Silence_%_{cat}'] = 0
+        if f'Call_Count_{cat}' not in pivot_df.columns:
+            pivot_df[f'Call_Count_{cat}'] = 0
+    agent_overall = silence_df_copy.groupby('Agent Name').agg({
+        'Silence %': 'mean', 'Silence Time (sec)': 'sum', 'Duration (sec)': 'sum'
+    }).reset_index()
+    agent_overall.columns = ['Agent', 'Overall_Avg_Silence_%', 'Total_Silence_Time', 'Total_Duration']
+    pivot_df = pivot_df.merge(agent_overall, on='Agent', how='left')
+    pivot_df['Total_Calls'] = pivot_df['Call_Count_Short'] + pivot_df['Call_Count_Medium'] + pivot_df['Call_Count_Large']
+    pivot_df = pivot_df.sort_values('Overall_Avg_Silence_%', ascending=False).reset_index(drop=True)
+    pivot_df['Rank'] = range(1, len(pivot_df) + 1)
+    return pivot_df
+
+def categorize_duration_4(duration, short_max, medium_max, large_threshold_sec):
+    if duration is None or pd.isna(duration):
+        return "Unknown"
+    if duration < short_max:
+        return "Short"
+    if duration <= medium_max:
+        return "Medium"
+    if duration <= large_threshold_sec:
+        return "Long"
+    return "Large"
+
+def build_agent_performance_table(silence_df, short_max, medium_max, large_threshold_sec):
+    if silence_df is None or len(silence_df) == 0:
+        return None
+    df = silence_df.copy()
+    df["Duration (sec)"] = pd.to_numeric(df["Duration (sec)"], errors="coerce")
+    df["Category"] = df["Duration (sec)"].apply(
+        lambda d: categorize_duration_4(d, short_max, medium_max, large_threshold_sec)
+    )
+    df = df[df["Category"] != "Unknown"]
+    if len(df) == 0:
+        return None
+    rows = []
+    for agent, g in df.groupby("Agent Name"):
+        row = {"Agent": agent, "Total_Calls": len(g), "Overall_Silence": round(g["Silence %"].mean(), 1)}
+        for cat in ["Short", "Medium", "Long", "Large"]:
+            sub = g[g["Category"] == cat]
+            row[f"{cat}_Calls"] = len(sub)
+            row[f"{cat}_Silence"] = round(sub["Silence %"].mean(), 1) if len(sub) else 0.0
+        rows.append(row)
+    out = pd.DataFrame(rows).sort_values("Overall_Silence", ascending=False).reset_index(drop=True)
+    out["Rank"] = range(1, len(out) + 1)
+    return out
+
+def default_large_threshold_min(duration_config):
+    return round(duration_config["medium_max"] / 60 + 3, 1)
 
 # ----------------------------------------------------------------------
-# Email functions with configurable SMTP - IMPROVED
+# Email functions
 # ----------------------------------------------------------------------
+def get_smtp_config():
+    return st.session_state.get("smtp_config", {})
+
 def test_smtp_connection(smtp_config=None):
-    """Test SMTP connection with given config."""
     if smtp_config is None:
         smtp_config = get_smtp_config()
-    
     try:
         if not smtp_config.get("password"):
             return False, "SMTP password not configured."
-
         host = smtp_config.get("host", "mail.dialdesk.net")
         port = int(smtp_config.get("port", 587))
         username = smtp_config.get("username", "")
         password = smtp_config.get("password", "")
         use_tls = smtp_config.get("use_tls", True)
-
-        print(f"🔍 Testing SMTP connection to {host}:{port} with TLS={use_tls}")
-        print(f"   Username: {username}")
-        
-        # Try to connect with timeout
         with smtplib.SMTP(host, port, timeout=10) as server:
             server.ehlo()
             if use_tls:
                 server.starttls()
                 server.ehlo()
             server.login(username, password)
-
         return True, f"✅ SMTP connection successful to {host}:{port}"
     except smtplib.SMTPAuthenticationError as e:
-        return False, f"❌ Authentication failed: {str(e)}\nCheck username/password."
-    except smtplib.SMTPServerDisconnected as e:
-        return False, f"❌ Server disconnected: {str(e)}\nServer may not support SMTP."
-    except ConnectionRefusedError:
-        return False, f"❌ Connection refused. Server {host}:{port} is not responding.\nCheck if SMTP service is running on this server."
-    except TimeoutError:
-        return False, f"❌ Connection timed out to {host}:{port}.\nCheck network/firewall settings."
+        return False, f"❌ Authentication failed: {str(e)}"
     except Exception as e:
-        error_msg = str(e)
-        if "timed out" in error_msg.lower() or "10060" in error_msg:
-            return False, f"❌ Connection timed out to {host}:{port}.\n\nPossible solutions:\n1. The server '{host}' might be incorrect\n2. Try using the server's IP address instead\n3. Check if port {port} is open for SMTP\n4. Check firewall settings\n5. Try port 465 (SSL) or 25 (no encryption)"
-        return False, f"❌ SMTP Error: {error_msg}"
-
-
-def try_alternative_smtp_configs():
-    """Try alternative SMTP configurations and return the working one."""
-    print("🔄 Trying alternative SMTP configurations...")
-    
-    for i, alt_config in enumerate(ALTERNATIVE_SMTP_CONFIGS, 1):
-        # Skip configurations without username/password for services that need them
-        if not alt_config.get("username") or not alt_config.get("password"):
-            # For services that need special auth, skip if no credentials
-            if alt_config.get("host") in ["smtp.sendgrid.net", "smtp.mailgun.org"]:
-                continue
-        
-        print(f"   Testing #{i}: {alt_config['host']}:{alt_config['port']}")
-        ok, msg = test_smtp_connection(alt_config)
-        if ok:
-            print(f"   ✅ Found working SMTP: {alt_config['host']}:{alt_config['port']}")
-            return alt_config, msg
-        else:
-            print(f"   ❌ Failed: {msg[:100]}")
-    
-    return None, "No working SMTP configuration found. Please check your settings."
-
+        return False, f"❌ SMTP Error: {str(e)}"
 
 def _send_mime(msg, mentor_emails, smtp_config=None):
-    """Send MIME message using configured SMTP."""
     if smtp_config is None:
         smtp_config = get_smtp_config()
-    
     host = smtp_config.get("host", "mail.dialdesk.net")
     port = int(smtp_config.get("port", 587))
     username = smtp_config.get("username", "")
     password = smtp_config.get("password", "")
     use_tls = smtp_config.get("use_tls", True)
-    
     with smtplib.SMTP(host, port, timeout=30) as server:
         server.ehlo()
         if use_tls:
@@ -1510,38 +1497,22 @@ def _send_mime(msg, mentor_emails, smtp_config=None):
         server.login(username, password)
         server.sendmail(msg["From"], mentor_emails, msg.as_string())
 
-
 def send_performance_report_email(perf_table, silence_df, client_name, mentor_emails, large_threshold_min, smtp_config=None):
-    """Send performance report email - WITHOUT summary cards."""
     if smtp_config is None:
         smtp_config = get_smtp_config()
-    
     if perf_table is None or len(perf_table) == 0:
         return False, "No performance data available"
-
     mentor_emails = [e.strip() for e in mentor_emails if e and '@' in e]
     if not mentor_emails:
         return False, "No valid mentor emails found!"
-
-    # Test SMTP connection first
     smtp_ok, smtp_msg = test_smtp_connection(smtp_config)
     if not smtp_ok:
-        # Try alternative configurations
-        alt_config, alt_msg = try_alternative_smtp_configs()
-        if alt_config:
-            smtp_config = alt_config
-            update_smtp_config(smtp_config)
-            st.session_state["smtp_config"] = smtp_config
-            print(f"Using alternative SMTP: {alt_config}")
-        else:
-            return False, f"SMTP Error: {smtp_msg}\n\nTried all configurations. Please check:\n1. Server address\n2. Port number\n3. Username/Password\n4. Network connectivity"
-
+        return False, f"SMTP Error: {smtp_msg}"
     try:
         msg = MIMEMultipart()
         msg["From"] = smtp_config.get("from_email") or smtp_config["username"]
         msg["To"] = ", ".join(mentor_emails)
         msg["Subject"] = f"📊 Agent Performance Report — {client_name} ({date.today().strftime('%d/%m/%Y')})"
-
         agent_rows = ""
         for _, row in perf_table.iterrows():
             overall = row.get('Overall_Silence', 0)
@@ -1557,7 +1528,6 @@ def send_performance_report_email(perf_table, silence_df, client_name, mentor_em
                 <td style="padding:10px;text-align:center;font-weight:bold;color:{color};">{overall}%</td>
             </tr>
             """
-
         body = f"""
         <html>
         <head>
@@ -1623,44 +1593,29 @@ def send_performance_report_email(perf_table, silence_df, client_name, mentor_em
 
         try:
             _send_mime(msg, mentor_emails, smtp_config)
-            return True, f"✅ Performance report sent to {len(mentor_emails)} mentors! (Using {smtp_config['host']}:{smtp_config['port']})"
+            return True, f"✅ Performance report sent to {len(mentor_emails)} mentors!"
         except Exception as e:
             return False, f"❌ Failed to send email: {str(e)}"
 
     except Exception as e:
         return False, f"❌ Error preparing email: {str(e)}"
 
-
 def send_defaulter_alert_email(defaulters_df, silence_df, client_name, mentor_emails, smtp_config=None):
-    """Send defaulter alert email."""
     if smtp_config is None:
         smtp_config = get_smtp_config()
-    
     if defaulters_df is None or len(defaulters_df) == 0:
         return False, "No defaulters to report"
-
     mentor_emails = [e.strip() for e in mentor_emails if e and '@' in e]
     if not mentor_emails:
         return False, "No valid mentor emails found!"
-
     smtp_ok, smtp_msg = test_smtp_connection(smtp_config)
     if not smtp_ok:
-        # Try alternative configurations
-        alt_config, alt_msg = try_alternative_smtp_configs()
-        if alt_config:
-            smtp_config = alt_config
-            update_smtp_config(smtp_config)
-            st.session_state["smtp_config"] = smtp_config
-            print(f"Using alternative SMTP: {alt_config}")
-        else:
-            return False, f"SMTP Error: {smtp_msg}\n\nTried all configurations. Please check:\n1. Server address\n2. Port number\n3. Username/Password\n4. Network connectivity"
-
+        return False, f"SMTP Error: {smtp_msg}"
     try:
         msg = MIMEMultipart()
         msg["From"] = smtp_config.get("from_email") or smtp_config["username"]
         msg["To"] = ", ".join(mentor_emails)
         msg["Subject"] = f"🚨 Defaulter Alert — {len(defaulters_df)} agent(s) flagged ({client_name})"
-
         agent_rows = ""
         for _, row in defaulters_df.iterrows():
             overall = row.get('Overall_Silence_%', 0)
@@ -1670,7 +1625,6 @@ def send_defaulter_alert_email(defaulters_df, silence_df, client_name, mentor_em
                 color, badge = '#D97706', '🟠 MEDIUM'
             else:
                 color, badge = '#2563EB', '🔵 LOW'
-
             agent_rows += f"""
             <tr>
                 <td style="padding:10px;font-weight:bold;color:{color};">{row.get('Agent', 'Unknown')}</td>
@@ -1682,7 +1636,6 @@ def send_defaulter_alert_email(defaulters_df, silence_df, client_name, mentor_em
                 <td style="padding:10px;text-align:center;"><span style="background:{color};color:white;padding:2px 10px;border-radius:12px;font-size:12px;">{badge}</span></td>
             </tr>
             """
-
         body = f"""
         <html>
         <head>
@@ -1747,34 +1700,36 @@ def send_defaulter_alert_email(defaulters_df, silence_df, client_name, mentor_em
 
         try:
             _send_mime(msg, mentor_emails, smtp_config)
-            return True, f"✅ Defaulter alert sent to {len(mentor_emails)} mentors! (Using {smtp_config['host']}:{smtp_config['port']})"
+            return True, f"✅ Defaulter alert sent to {len(mentor_emails)} mentors!"
         except Exception as e:
             return False, f"❌ Failed to send email: {str(e)}"
 
     except Exception as e:
         return False, f"❌ Error preparing email: {str(e)}"
 
-
 # ----------------------------------------------------------------------
-# Auto-scheduler with configurable time
+# Scheduler functions
 # ----------------------------------------------------------------------
 def run_scheduled_job():
     """Run the scheduled job for all auto-schedule clients."""
     try:
-        # Get current SMTP config from session state
-        smtp_config = st.session_state.get("smtp_config", DEFAULT_SMTP_CONFIG.copy())
-        
+        smtp_config = get_smtp_config()
         do_login()
         yesterday = date.today() - timedelta(days=1)
+        auto_clients = st.session_state.get("auto_schedule_clients", ["Weebo", "Hari Om Pvt Ltd"])
+        mentor_emails = st.session_state.get("mentor_emails", [])
+        clients = st.session_state.get("clients", {})
 
-        for client_name in AUTO_SCHEDULE_CLIENTS:
-            if client_name not in CLIENTS:
+        for client_name in auto_clients:
+            if client_name not in clients:
                 continue
+            client_data = clients[client_name]
+            company_id = client_data["company_id"] if isinstance(client_data, dict) else client_data
 
             payload = {
                 "from_date": yesterday.strftime("%Y-%m-%d"),
                 "to_date": yesterday.strftime("%Y-%m-%d"),
-                "company_id": str(CLIENTS[client_name]),
+                "company_id": str(company_id),
             }
 
             resp = fetch_cdr(payload)
@@ -1806,13 +1761,15 @@ def run_scheduled_job():
                 continue
 
             duration_config = get_duration_config(client_name)
+            silence_threshold = st.session_state.get("silence_threshold", 30)
+            min_calls = st.session_state.get("min_calls_per_agent", 3)
+            
             silence_df, _, defaulters_df = run_complete_call_analysis(
                 cdr_df, col_recording, col_agent, col_date, col_time, col_phone,
                 vad_threshold=0.3, dead_air_secs=5, duration_config=duration_config,
-                silence_threshold=30, min_calls=3
+                silence_threshold=silence_threshold, min_calls=min_calls
             )
 
-            mentor_emails = st.session_state.get("mentor_emails", DEFAULT_MENTOR_EMAILS)
             large_threshold_sec = default_large_threshold_min(duration_config) * 60
             perf_table = build_agent_performance_table(
                 silence_df, duration_config["short_max"], duration_config["medium_max"], large_threshold_sec
@@ -1832,7 +1789,6 @@ def run_scheduled_job():
     except Exception as e:
         print(f"[{datetime.now()}] Scheduled job error: {str(e)}")
 
-
 def start_scheduler():
     """Start the scheduler with configured time."""
     if st.session_state.get("scheduler_running", False):
@@ -1845,7 +1801,6 @@ def start_scheduler():
         return
 
     def scheduler_loop():
-        # Clear any existing schedule
         schedule.clear()
         schedule.every().day.at(scheduler_time).do(run_scheduled_job)
         while True:
@@ -1856,361 +1811,119 @@ def start_scheduler():
     thread.start()
     st.session_state["scheduler_running"] = True
 
-
 def restart_scheduler():
-    """Restart the scheduler with new settings."""
     st.session_state["scheduler_running"] = False
     time.sleep(1)
     start_scheduler()
 
-
 # ----------------------------------------------------------------------
-# Email & Reports Portal (modal dialog) - IMPROVED
+# Dashboard / Call Analytics Section
 # ----------------------------------------------------------------------
-@st.dialog("📧 Email & Reports Portal")
-def open_email_portal(client_name):
-    st.caption("Manage recipients, SMTP settings, and send reports.")
-
-    # --- SMTP Configuration Section ---
-    st.markdown("### 📧 SMTP Configuration")
-    st.caption("Configure your email server settings. These will be used for all email reports.")
+def render_dashboard():
+    """Render the main dashboard with call analytics."""
     
-    smtp_config = st.session_state.get("smtp_config", DEFAULT_SMTP_CONFIG.copy())
-    
-    with st.expander("⚙️ SMTP Settings", expanded=True):
-        st.markdown("""
-        <div class="info-box">
-        💡 <strong>Important:</strong> <code>mail.domain.com</code> is a placeholder. 
-        You need to use your actual SMTP server. For <code>tickets@dialdesk.net</code>, try:
-        <ul>
-            <li><code>mail.dialdesk.net</code> (Port 587, TLS)</li>
-            <li><code>smtp.dialdesk.net</code> (Port 587, TLS)</li>
-            <li><code>mail.dialdesk.net</code> (Port 465, SSL)</li>
-        </ul>
-        If unsure, contact your email hosting provider.
-        </div>
-        """, unsafe_allow_html=True)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            new_host = st.text_input("SMTP Server", value=smtp_config.get("host", "mail.dialdesk.net"), 
-                                    help="e.g., smtp.gmail.com, mail.yourdomain.com", key="smtp_host")
-            new_port = st.number_input("Port", value=int(smtp_config.get("port", 587)), step=1, 
-                                      help="587 (TLS) or 465 (SSL) or 25", key="smtp_port")
-            new_username = st.text_input("Username/Email", value=smtp_config.get("username", "tickets@dialdesk.net"), 
-                                        key="smtp_username")
-        with col2:
-            new_password = st.text_input("Password", value=smtp_config.get("password", ""), type="password", key="smtp_password")
-            new_from_email = st.text_input("From Email", value=smtp_config.get("from_email", "tickets@dialdesk.net"), 
-                                          key="smtp_from")
-            use_tls = st.checkbox("Use TLS/SSL", value=smtp_config.get("use_tls", True), 
-                                help="Enable for ports 587 and 465", key="smtp_tls")
-        
-        # Common SMTP settings quick reference
-        st.markdown("**🔧 Common SMTP Settings:**")
-        st.markdown("""
-        | Service | Server | Port | TLS/SSL |
-        |---------|--------|------|---------|
-        | Gmail | smtp.gmail.com | 587 | TLS |
-        | Gmail (SSL) | smtp.gmail.com | 465 | SSL |
-        | Office 365 | smtp.office365.com | 587 | TLS |
-        | SendGrid | smtp.sendgrid.net | 587 | TLS |
-        | Mailgun | smtp.mailgun.org | 587 | TLS |
-        | Custom Domain | mail.yourdomain.com | 587 | TLS |
-        | Custom Domain (SSL) | mail.yourdomain.com | 465 | SSL |
-        """)
-        
-        col_btn1, col_btn2, col_btn3 = st.columns(3)
-        with col_btn1:
-            if st.button("💾 Save Settings", key="save_smtp"):
-                updated_config = {
-                    "host": new_host,
-                    "port": new_port,
-                    "username": new_username,
-                    "password": new_password,
-                    "from_email": new_from_email or new_username,
-                    "use_tls": use_tls,
-                }
-                update_smtp_config(updated_config)
-                st.success("✅ SMTP settings saved!")
-                st.rerun()
-        
-        with col_btn2:
-            if st.button("🔬 Test Connection", key="test_smtp_btn"):
-                ok, smtp_msg = test_smtp_connection()
-                if ok:
-                    st.markdown(f'<div class="success-box">✅ {smtp_msg}</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown(f'<div class="warning-box">⚠️ {smtp_msg}</div>', unsafe_allow_html=True)
-        
-        with col_btn3:
-            if st.button("🔄 Auto-Find SMTP", key="try_alt_smtp"):
-                with st.spinner("Trying alternative SMTP configurations..."):
-                    alt_config, alt_msg = try_alternative_smtp_configs()
-                    if alt_config:
-                        update_smtp_config(alt_config)
-                        st.success(f"✅ Found working SMTP: {alt_config['host']}:{alt_config['port']}")
-                        st.rerun()
-                    else:
-                        st.error(f"❌ {alt_msg}")
-
-    st.markdown("---")
-    
-    # --- Auto-Scheduler Configuration ---
-    st.markdown("### ⏰ Auto-Scheduler")
-    st.caption("Configure when daily reports should be sent automatically.")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        current_time = st.session_state.get("scheduler_time", "23:00")
-        new_scheduler_time = st.text_input("Report Time (HH:MM)", value=current_time, key="scheduler_time_input")
-    with col2:
-        scheduler_enabled = st.checkbox("Enable Auto-Scheduler", value=st.session_state.get("scheduler_enabled", True), key="scheduler_enabled_check")
-    
-    if st.button("🔄 Update Scheduler", key="update_scheduler"):
-        # Validate time format
-        try:
-            datetime.strptime(new_scheduler_time, "%H:%M")
-            st.session_state["scheduler_time"] = new_scheduler_time
-            st.session_state["scheduler_enabled"] = scheduler_enabled
-            restart_scheduler()
-            st.success(f"✅ Scheduler updated! Reports will run daily at {new_scheduler_time}")
-        except ValueError:
-            st.error("❌ Invalid time format. Please use HH:MM (e.g., 23:00)")
-
-    if st.session_state.get("scheduler_running", False):
-        st.markdown(f'<div class="success-box">🟢 Scheduler is running. Next report at {st.session_state.get("scheduler_time", "23:00")}</div>', unsafe_allow_html=True)
-    else:
-        status_text = "enabled" if st.session_state.get("scheduler_enabled", True) else "disabled"
-        st.markdown(f'<div class="warning-box">🟡 Scheduler is {status_text}</div>', unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # --- Recipients Management ---
-    st.markdown("### 👥 Recipients")
-    st.caption("Manage email recipients for reports.")
-    
-    if st.session_state.mentor_emails:
-        chips = "".join(f'<span class="email-chip">{e}</span>' for e in st.session_state.mentor_emails)
-        st.markdown(f'<div class="email-list-box">{chips}</div>', unsafe_allow_html=True)
-    else:
-        st.warning("No recipients added yet.")
-
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        new_email = st.text_input("Add recipient", placeholder="mentor@example.com", key="portal_new_email")
-    with c2:
-        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-        if st.button("➕ Add", use_container_width=True, key="portal_add_email"):
-            if new_email and "@" in new_email and "." in new_email:
-                if new_email.strip() not in st.session_state.mentor_emails:
-                    st.session_state.mentor_emails.append(new_email.strip())
-                    st.rerun()
-            else:
-                st.error("Enter a valid email address.")
-
-    if st.session_state.mentor_emails:
-        rcol1, rcol2, rcol3 = st.columns([2, 1, 1])
-        with rcol1:
-            remove_email = st.selectbox("Remove recipient", [""] + st.session_state.mentor_emails, key="portal_remove_select")
-        with rcol2:
-            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-            if st.button("🗑️ Remove", use_container_width=True, key="portal_remove_btn"):
-                if remove_email:
-                    st.session_state.mentor_emails.remove(remove_email)
-                    st.rerun()
-        with rcol3:
-            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-            if st.button("↩️ Reset", use_container_width=True, key="portal_reset_btn"):
-                st.session_state.mentor_emails = DEFAULT_MENTOR_EMAILS.copy()
-                st.rerun()
-
-    st.markdown("---")
-    
-    # --- Large Call Threshold ---
-    duration_config = get_duration_config(client_name)
-    current_min = round(duration_config["medium_max"] / 60, 1)
-    stored = st.session_state.get("email_large_threshold_min")
-    default_val = stored if stored and stored >= current_min else default_large_threshold_min(duration_config)
-
-    st.markdown("**Large call threshold**")
-    st.caption("Calls longer than this are counted as 'Large'; calls between Medium and this cutoff are 'Long'.")
-    large_threshold_min = st.number_input(
-        "Large calls start after (minutes)",
-        min_value=current_min, max_value=60.0, value=default_val, step=0.5,
-        key="portal_large_threshold",
+    # Check if we have data
+    have_data = (
+        st.session_state["cdr_df"] is not None
+        and len(st.session_state["cdr_df"]) > 0
     )
-    st.session_state["email_large_threshold_min"] = large_threshold_min
 
-    st.markdown("---")
-    
-    # --- Preview ---
-    silence_df = st.session_state.get("complete_analysis_df")
-    perf_table = None
-    if silence_df is None or len(silence_df) == 0:
-        st.info("Run **Complete Call Analysis** (Step 5) first to enable the report preview.")
-    else:
-        perf_table = build_agent_performance_table(
-            silence_df, duration_config["short_max"], duration_config["medium_max"], large_threshold_min * 60
-        )
-        if perf_table is not None:
-            st.markdown("**Preview**")
-            preview = perf_table[[
-                "Rank", "Agent", "Total_Calls",
-                "Short_Calls", "Short_Silence",
-                "Medium_Calls", "Medium_Silence",
-                "Long_Calls", "Long_Silence",
-                "Large_Calls", "Large_Silence",
-                "Overall_Silence",
-            ]]
-            st.dataframe(preview, use_container_width=True, height=200)
+    # Step 1: Client + date range
+    st.markdown('<div class="step-card">', unsafe_allow_html=True)
+    st.markdown('<div class="step-title"><span class="step-badge">1</span>Choose Client & Date Range</div>', unsafe_allow_html=True)
+    st.markdown('<p class="step-subtitle">Only calls belonging to the selected client will be fetched.</p>', unsafe_allow_html=True)
 
-    st.markdown("---")
-    
-    # --- Send Reports ---
-    st.markdown("### 📤 Send Reports")
-    scol1, scol2 = st.columns(2)
-    defaulters_df = st.session_state.get("defaulter_agents_df")
+    clients = st.session_state.get("clients", {})
+    client_names = list(clients.keys()) if clients else []
 
-    with scol1:
-        send_perf = st.button(
-            "📊 Send Performance Report", type="primary", use_container_width=True,
-            disabled=perf_table is None, key="portal_send_perf",
-        )
-    with scol2:
-        send_def = st.button(
-            "🚨 Send Defaulter Alert", use_container_width=True,
-            disabled=defaulters_df is None or len(defaulters_df) == 0, key="portal_send_def",
-        )
+    if not client_names:
+        st.warning("No clients configured. Please add clients in the Settings tab.")
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
 
-    if send_perf:
-        if not st.session_state.mentor_emails:
-            st.error("Add at least one recipient first.")
+    c1, c2 = st.columns([1.2, 1.8])
+    with c1:
+        client_name = st.selectbox("Client", options=sorted(client_names))
+        client_data = clients.get(client_name, {})
+        company_id = client_data["company_id"] if isinstance(client_data, dict) else client_data
+    with c2:
+        dc1, dc2 = st.columns(2)
+        with dc1:
+            from_date = st.date_input("Start Date", value=date.today() - timedelta(days=1), max_value=date.today())
+        with dc2:
+            to_date = st.date_input("End Date", value=date.today(), max_value=date.today())
+        if from_date > to_date:
+            st.error("End Date must be on or after Start Date.")
+
+    if st.session_state.get("cdr_client") is not None and st.session_state["cdr_client"] != client_name:
+        st.session_state["cdr_df"] = None
+        st.session_state["cdr_client"] = None
+        st.session_state["final_df"] = None
+        st.session_state["agent_analytics_df"] = None
+        st.session_state["complete_analysis_df"] = None
+        st.session_state["agent_silence_by_category_df"] = None
+        st.session_state["defaulter_agents_df"] = None
+
+    fetch_clicked = st.button("📥  Fetch Calls", type="primary")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    if fetch_clicked:
+        if from_date > to_date:
+            st.error("Please correct the date range before fetching.")
         else:
-            smtp_config = st.session_state.get("smtp_config", DEFAULT_SMTP_CONFIG.copy())
-            with st.spinner("Sending performance report..."):
-                ok, result_msg = send_performance_report_email(
-                    perf_table, silence_df, client_name, st.session_state.mentor_emails, 
-                    large_threshold_min, smtp_config
-                )
-            if ok:
-                st.session_state["last_email_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                st.success(result_msg)
-            else:
-                st.error(result_msg)
+            try:
+                payload = {
+                    "from_date": from_date.strftime("%Y-%m-%d"),
+                    "to_date": to_date.strftime("%Y-%m-%d"),
+                    "company_id": str(company_id),
+                }
+                with st.spinner(f"Fetching calls for {client_name}..."):
+                    resp = fetch_cdr(payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    records = data.get("data", data) if isinstance(data, dict) else data
+                    if isinstance(records, dict):
+                        for v in records.values():
+                            if isinstance(v, list):
+                                records = v
+                                break
+                    cdr_df = pd.DataFrame(records)
 
-    if send_def:
-        if not st.session_state.mentor_emails:
-            st.error("Add at least one recipient first.")
-        else:
-            smtp_config = st.session_state.get("smtp_config", DEFAULT_SMTP_CONFIG.copy())
-            with st.spinner("Sending defaulter alert..."):
-                ok, result_msg = send_defaulter_alert_email(
-                    defaulters_df, silence_df, client_name, st.session_state.mentor_emails, smtp_config
-                )
-            if ok:
-                st.session_state["last_email_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                st.success(result_msg)
-            else:
-                st.error(result_msg)
+                    cdr_df, removed_count = filter_out_vdcl_calls(cdr_df)
+                    st.session_state["vdcl_removed"] = removed_count
 
-    # Last email status
-    if st.session_state.get("last_email_time"):
-        st.caption(f"📨 Last email sent: {st.session_state['last_email_time']}")
+                    dur_source_col, duration_seconds = resolve_duration_column(cdr_df)
+                    cdr_df["_duration_sec"] = duration_seconds
+                    st.session_state["cdr_df"] = cdr_df
+                    st.session_state["cdr_client"] = client_name
+                    st.session_state["final_df"] = None
+                    st.session_state["agent_analytics_df"] = None
+                    st.session_state["complete_analysis_df"] = None
+                    st.session_state["agent_silence_by_category_df"] = None
+                    st.session_state["defaulter_agents_df"] = None
 
-
-# ----------------------------------------------------------------------
-# MAIN APP
-# ----------------------------------------------------------------------
-# Start scheduler on app load
-if not st.session_state.get("scheduler_running", False):
-    start_scheduler()
-
-# ---- Step 1: Client + date range ----
-st.markdown('<div class="step-card">', unsafe_allow_html=True)
-st.markdown('<div class="step-title"><span class="step-badge">1</span>Choose Client & Date Range</div>', unsafe_allow_html=True)
-st.markdown('<p class="step-subtitle">Only calls belonging to the selected client will be fetched.</p>', unsafe_allow_html=True)
-
-c1, c2 = st.columns([1.2, 1.8])
-with c1:
-    client_name = st.selectbox("Client", options=sorted(CLIENTS.keys()))
-    company_id = CLIENTS[client_name]
-with c2:
-    dc1, dc2 = st.columns(2)
-    with dc1:
-        from_date = st.date_input("Start Date", value=date.today() - timedelta(days=1), max_value=date.today())
-    with dc2:
-        to_date = st.date_input("End Date", value=date.today(), max_value=date.today())
-    if from_date > to_date:
-        st.error("End Date must be on or after Start Date.")
-
-if st.session_state.get("cdr_client") is not None and st.session_state["cdr_client"] != client_name:
-    st.session_state["cdr_df"] = None
-    st.session_state["cdr_client"] = None
-    st.session_state["final_df"] = None
-    st.session_state["agent_analytics_df"] = None
-    st.session_state["complete_analysis_df"] = None
-    st.session_state["agent_silence_by_category_df"] = None
-    st.session_state["defaulter_agents_df"] = None
-
-fetch_clicked = st.button("📥  Fetch Calls", type="primary")
-st.markdown('</div>', unsafe_allow_html=True)
-
-if fetch_clicked:
-    if from_date > to_date:
-        st.error("Please correct the date range before fetching.")
-    else:
-        try:
-            payload = {
-                "from_date": from_date.strftime("%Y-%m-%d"),
-                "to_date": to_date.strftime("%Y-%m-%d"),
-                "company_id": str(company_id),
-            }
-            with st.spinner(f"Fetching calls for {client_name}..."):
-                resp = fetch_cdr(payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                records = data.get("data", data) if isinstance(data, dict) else data
-                if isinstance(records, dict):
-                    for v in records.values():
-                        if isinstance(v, list):
-                            records = v
-                            break
-                cdr_df = pd.DataFrame(records)
-
-                cdr_df, removed_count = filter_out_vdcl_calls(cdr_df)
-                st.session_state["vdcl_removed"] = removed_count
-
-                dur_source_col, duration_seconds = resolve_duration_column(cdr_df)
-                cdr_df["_duration_sec"] = duration_seconds
-                st.session_state["cdr_df"] = cdr_df
-                st.session_state["cdr_client"] = client_name
-                st.session_state["final_df"] = None
-                st.session_state["agent_analytics_df"] = None
-                st.session_state["complete_analysis_df"] = None
-                st.session_state["agent_silence_by_category_df"] = None
-                st.session_state["defaulter_agents_df"] = None
-
-                if len(cdr_df) == 0:
-                    st.warning(f"No valid calls found for **{client_name}** in this date range.")
+                    if len(cdr_df) == 0:
+                        st.warning(f"No valid calls found for **{client_name}** in this date range.")
+                    else:
+                        st.markdown(
+                            f'<span class="status-banner-ok">✅ Fetched {len(cdr_df)} valid calls for {client_name}</span>',
+                            unsafe_allow_html=True,
+                        )
                 else:
-                    st.markdown(
-                        f'<span class="status-banner-ok">✅ Fetched {len(cdr_df)} valid calls for {client_name}</span>',
-                        unsafe_allow_html=True,
-                    )
-            else:
-                st.error(f"Fetch failed: HTTP {resp.status_code} — {resp.text[:300]}")
-        except Exception as e:
-            st.error(f"Fetch error: {e}")
+                    st.error(f"Fetch failed: HTTP {resp.status_code} — {resp.text[:300]}")
+            except Exception as e:
+                st.error(f"Fetch error: {e}")
 
-# ---- Step 2 onwards: only once we have data ----
-have_data = (
-    st.session_state["cdr_df"] is not None
-    and len(st.session_state["cdr_df"]) > 0
-    and st.session_state.get("cdr_client") == client_name
-)
+    # ---- Step 2 onwards: only once we have data ----
+    have_data = (
+        st.session_state["cdr_df"] is not None
+        and len(st.session_state["cdr_df"]) > 0
+    )
 
-if have_data:
+    if not have_data:
+        st.info("👆 Pick a client and date range above, then click **Fetch Calls** to get started.")
+        return
+
     cdr_df = st.session_state["cdr_df"].copy()
     col_date = find_column(cdr_df, COLUMN_CANDIDATES["date"])
     col_time = find_column(cdr_df, COLUMN_CANDIDATES["time"])
@@ -2607,13 +2320,13 @@ if have_data:
     cfg_col1, cfg_col2, cfg_col3 = st.columns(3)
     with cfg_col1:
         silence_threshold = st.number_input(
-            "Silence threshold (%)", min_value=20, max_value=50, value=30, step=5,
+            "Silence threshold (%)", min_value=20, max_value=50, value=st.session_state.get("silence_threshold", 30), step=5,
             help="Agents with overall OR short-call silence above this are flagged.",
             key="complete_silence_threshold"
         )
     with cfg_col2:
         min_calls_per_agent = st.number_input(
-            "Minimum calls per agent", min_value=1, max_value=10, value=3, step=1,
+            "Minimum calls per agent", min_value=1, max_value=10, value=st.session_state.get("min_calls_per_agent", 3), step=1,
             help="Agents with fewer calls are skipped.", key="complete_min_calls"
         )
     with cfg_col3:
@@ -2718,29 +2431,363 @@ if have_data:
             )
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # ---- Step 6: Email & Reports Portal ----
-    st.markdown('<div class="step-card" style="border: 2px solid #4F46E5; background: #F5F4FF;">', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="step-title"><span class="step-badge" style="background:#7C3AED;">6</span>📧 Email Reports</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown('<p class="step-subtitle">Configure SMTP, manage recipients, set scheduler time, and send reports.</p>', unsafe_allow_html=True)
+# ----------------------------------------------------------------------
+# Settings Section
+# ----------------------------------------------------------------------
+def render_settings():
+    """Render the settings page with tabs."""
     
-    # Show current status
-    smtp_config = st.session_state.get("smtp_config", DEFAULT_SMTP_CONFIG.copy())
-    st.caption(
-        f"⏰ Auto-reports: {'Enabled' if st.session_state.get('scheduler_enabled', True) else 'Disabled'} · "
-        f"Time: {st.session_state.get('scheduler_time', '23:00')} · "
-        f"Recipients: {len(st.session_state.mentor_emails)} · "
-        f"SMTP: {smtp_config.get('host', 'Not set')}:{smtp_config.get('port', '')}"
-    )
+    st.markdown("""
+    <div class="callai-hero">
+        <h1>⚙️ Settings</h1>
+        <p>Manage clients, email recipients, and system configuration.</p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    if st.session_state.get("last_email_time"):
-        st.caption(f"📨 Last report sent: {st.session_state['last_email_time']}")
+    # Create tabs for settings
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🏢 Client Configuration", 
+        "📧 Email Settings", 
+        "⚙️ System Config",
+        "📊 Defaulters Config"
+    ])
     
-    if st.button("📧 Open Email Portal", type="primary"):
-        open_email_portal(client_name)
-    st.markdown('</div>', unsafe_allow_html=True)
+    # ---- Tab 1: Client Configuration ----
+    with tab1:
+        st.markdown("### 🏢 Client Management")
+        st.caption("Add, remove, or update client configurations. Changes sync across all users.")
+        
+        # Display existing clients
+        clients = st.session_state.get("clients", {})
+        
+        if clients:
+            st.markdown("#### Current Clients")
+            for name, data in clients.items():
+                if isinstance(data, dict):
+                    company_id = data.get("company_id", "")
+                    short_max = data.get("short_max", 120)
+                    medium_max = data.get("medium_max", 300)
+                    large_min = data.get("large_min", 300)
+                else:
+                    company_id = data
+                    short_max = 120
+                    medium_max = 300
+                    large_min = 300
+                
+                st.markdown(f"""
+                <div class="client-card">
+                    <div class="client-name">{name}</div>
+                    <div class="client-details">
+                        Company ID: {company_id} · 
+                        Short: &lt;{fmt_hms(short_max)} · 
+                        Medium: {fmt_hms(short_max)}–{fmt_hms(medium_max)} · 
+                        Large: &gt;{fmt_hms(large_min)}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Add new client
+        st.markdown("#### ➕ Add New Client")
+        col1, col2 = st.columns(2)
+        with col1:
+            new_client_name = st.text_input("Client Name", placeholder="e.g., New Client", key="new_client_name")
+            new_company_id = st.text_input("Company ID", placeholder="e.g., 123", key="new_company_id")
+        with col2:
+            new_short = st.number_input("Short ends at (seconds)", min_value=30, value=120, step=10, key="new_short")
+            new_medium = st.number_input("Medium ends at (seconds)", min_value=new_short, value=300, step=10, key="new_medium")
+            new_large = st.number_input("Large starts at (seconds)", min_value=new_medium, value=300, step=10, key="new_large")
+        
+        if st.button("➕ Add Client", type="primary", key="add_client_btn"):
+            if new_client_name and new_company_id:
+                config = {
+                    "short_max": int(new_short),
+                    "medium_min": int(new_short),
+                    "medium_max": int(new_medium),
+                    "large_min": int(new_large),
+                    "extra_large_enabled": False,
+                    "extra_large_min": int(new_medium + 180),
+                }
+                if save_client_to_db(new_client_name, new_company_id, config):
+                    st.success(f"✅ Client '{new_client_name}' added successfully!")
+                    load_all_configs()
+                    st.rerun()
+                else:
+                    st.error("❌ Failed to add client. Check Supabase connection.")
+            else:
+                st.warning("Please enter both Client Name and Company ID.")
+        
+        # Remove client
+        st.markdown("#### 🗑️ Remove Client")
+        if clients:
+            remove_client = st.selectbox("Select client to remove", [""] + list(clients.keys()), key="remove_client_select")
+            if remove_client and st.button("🗑️ Remove Client", type="secondary", key="remove_client_btn"):
+                if delete_client_from_db(remove_client):
+                    st.success(f"✅ Client '{remove_client}' removed successfully!")
+                    load_all_configs()
+                    st.rerun()
+                else:
+                    st.error("❌ Failed to remove client.")
+        else:
+            st.info("No clients to remove.")
+    
+    # ---- Tab 2: Email Settings ----
+    with tab2:
+        st.markdown("### 📧 Email Settings")
+        st.caption("Manage SMTP configuration and report recipients.")
+        
+        # SMTP Configuration
+        st.markdown("#### SMTP Configuration")
+        smtp_config = st.session_state.get("smtp_config", {})
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            smtp_host = st.text_input("SMTP Server", value=smtp_config.get("host", "mail.dialdesk.net"), key="settings_smtp_host")
+            smtp_port = st.number_input("Port", value=int(smtp_config.get("port", 587)), step=1, key="settings_smtp_port")
+            smtp_username = st.text_input("Username", value=smtp_config.get("username", ""), key="settings_smtp_username")
+        with col2:
+            smtp_password = st.text_input("Password", value=smtp_config.get("password", ""), type="password", key="settings_smtp_password")
+            smtp_from = st.text_input("From Email", value=smtp_config.get("from_email", ""), key="settings_smtp_from")
+            smtp_tls = st.checkbox("Use TLS", value=smtp_config.get("use_tls", True), key="settings_smtp_tls")
+        
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            if st.button("💾 Save SMTP Settings", key="save_smtp_settings"):
+                updated_config = {
+                    "host": smtp_host,
+                    "port": int(smtp_port),
+                    "username": smtp_username,
+                    "password": smtp_password,
+                    "from_email": smtp_from or smtp_username,
+                    "use_tls": smtp_tls,
+                }
+                if save_smtp_config_to_db(updated_config):
+                    st.success("✅ SMTP settings saved!")
+                    load_all_configs()
+                    st.rerun()
+                else:
+                    st.error("❌ Failed to save SMTP settings.")
+        
+        with col_btn2:
+            if st.button("🔬 Test Connection", key="test_smtp_settings"):
+                ok, msg = test_smtp_connection()
+                if ok:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+        
+        st.markdown("---")
+        
+        # Mentor Emails
+        st.markdown("#### 👥 Report Recipients")
+        st.caption("Emails that will receive performance reports and defaulter alerts.")
+        
+        current_emails = st.session_state.get("mentor_emails", [])
+        
+        if current_emails:
+            chips = "".join(f'<span class="email-chip">{e}</span>' for e in current_emails)
+            st.markdown(f'<div class="email-list-box">{chips}</div>', unsafe_allow_html=True)
+        else:
+            st.warning("No recipients added yet.")
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            new_email = st.text_input("Add recipient email", placeholder="mentor@example.com", key="settings_new_email")
+        with col2:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            if st.button("➕ Add", use_container_width=True, key="settings_add_email"):
+                if new_email and "@" in new_email and "." in new_email:
+                    emails = current_emails + [new_email.strip()]
+                    if save_mentor_emails_to_db(emails):
+                        st.success(f"✅ Added {new_email.strip()}")
+                        load_all_configs()
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to save email.")
+                else:
+                    st.warning("Please enter a valid email address.")
+        
+        if current_emails:
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                remove_email = st.selectbox("Remove recipient", [""] + current_emails, key="settings_remove_select")
+            with col2:
+                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                if st.button("🗑️ Remove", use_container_width=True, key="settings_remove_email"):
+                    if remove_email:
+                        emails = [e for e in current_emails if e != remove_email]
+                        if save_mentor_emails_to_db(emails):
+                            st.success(f"✅ Removed {remove_email}")
+                            load_all_configs()
+                            st.rerun()
+                        else:
+                            st.error("❌ Failed to remove email.")
+        
+        # Auto-schedule clients
+        st.markdown("#### 🤖 Auto-Schedule Clients")
+        st.caption("Clients for which daily reports will be automatically generated.")
+        
+        auto_clients = st.session_state.get("auto_schedule_clients", ["Weebo", "Hari Om Pvt Ltd"])
+        all_clients = list(st.session_state.get("clients", {}).keys())
+        
+        # Only show the multiselect if there are clients
+        if all_clients:
+            # Filter auto_clients to only include those that exist in all_clients
+            valid_auto_clients = [c for c in auto_clients if c in all_clients]
+            
+            selected_auto = st.multiselect(
+                "Select clients for auto-reporting",
+                options=all_clients,
+                default=valid_auto_clients if valid_auto_clients else [],
+                key="settings_auto_clients"
+            )
+            
+            if st.button("💾 Save Auto-Schedule Clients", key="save_auto_clients"):
+                if supabase:
+                    try:
+                        supabase.table("scheduler_config").update({
+                            "auto_schedule_clients": selected_auto
+                        }).eq("id", 1).execute()
+                        st.session_state["auto_schedule_clients"] = selected_auto
+                        st.success("✅ Auto-schedule clients updated!")
+                    except Exception as e:
+                        st.error(f"❌ Failed to update: {e}")
+                else:
+                    st.warning("Supabase not connected. Changes won't be saved.")
+        else:
+            st.info("Add clients first to configure auto-scheduling.")
+    
+    # ---- Tab 3: System Config ----
+    with tab3:
+        st.markdown("### ⚙️ System Configuration")
+        
+        # Scheduler Configuration
+        st.markdown("#### ⏰ Scheduler Settings")
+        
+        current_time = st.session_state.get("scheduler_time", "23:00")
+        current_enabled = st.session_state.get("scheduler_enabled", True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            new_scheduler_time = st.text_input("Report Time (HH:MM)", value=current_time, key="settings_scheduler_time")
+        with col2:
+            scheduler_enabled = st.checkbox("Enable Auto-Scheduler", value=current_enabled, key="settings_scheduler_enabled")
+        
+        if st.button("💾 Save Scheduler Settings", key="save_scheduler_settings"):
+            try:
+                datetime.strptime(new_scheduler_time, "%H:%M")
+                config = {
+                    "scheduler_time": new_scheduler_time,
+                    "scheduler_enabled": scheduler_enabled,
+                }
+                if save_scheduler_config_to_db(config):
+                    st.session_state["scheduler_time"] = new_scheduler_time
+                    st.session_state["scheduler_enabled"] = scheduler_enabled
+                    restart_scheduler()
+                    st.success(f"✅ Scheduler updated! Reports will run daily at {new_scheduler_time}")
+                    st.rerun()
+                else:
+                    st.error("❌ Failed to save scheduler settings.")
+            except ValueError:
+                st.error("❌ Invalid time format. Please use HH:MM (e.g., 23:00)")
+        
+        # Scheduler status
+        if st.session_state.get("scheduler_running", False):
+            st.markdown(f'<div class="success-box">🟢 Scheduler is running. Next report at {st.session_state.get("scheduler_time", "23:00")}</div>', unsafe_allow_html=True)
+        else:
+            status_text = "enabled" if st.session_state.get("scheduler_enabled", True) else "disabled"
+            st.markdown(f'<div class="warning-box">🟡 Scheduler is {status_text}</div>', unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Last email status
+        if st.session_state.get("last_email_time"):
+            st.caption(f"📨 Last report sent: {st.session_state['last_email_time']}")
+        
+        # Supabase Status
+        st.markdown("#### 🔗 Database Status")
+        if supabase:
+            st.markdown('<div class="success-box">✅ Connected to Supabase</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="warning-box">⚠️ Not connected to Supabase. Changes won\'t be saved across sessions.</div>', unsafe_allow_html=True)
+    
+    # ---- Tab 4: Defaulters Config ----
+    with tab4:
+        st.markdown("### 📊 Defaulter Detection Configuration")
+        st.caption("Configure thresholds for detecting defaulter agents.")
+        
+        current_silence = st.session_state.get("silence_threshold", 30)
+        current_min_calls = st.session_state.get("min_calls_per_agent", 3)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            new_silence_threshold = st.number_input(
+                "Silence Threshold (%)", 
+                min_value=20, max_value=50, 
+                value=current_silence, step=5,
+                help="Agents with overall or short-call silence above this are flagged.",
+                key="settings_silence_threshold"
+            )
+        with col2:
+            new_min_calls = st.number_input(
+                "Minimum Calls per Agent",
+                min_value=1, max_value=10,
+                value=current_min_calls, step=1,
+                help="Agents with fewer calls are skipped from defaulter detection.",
+                key="settings_min_calls"
+            )
+        
+        if st.button("💾 Save Defaulter Settings", key="save_defaulter_settings"):
+            config = {
+                "silence_threshold": int(new_silence_threshold),
+                "min_calls_per_agent": int(new_min_calls),
+            }
+            if save_defaulters_config_to_db(config):
+                st.session_state["silence_threshold"] = new_silence_threshold
+                st.session_state["min_calls_per_agent"] = new_min_calls
+                st.success("✅ Defaulter settings saved!")
+                st.rerun()
+            else:
+                st.error("❌ Failed to save defaulter settings.")
+        
+        st.markdown("---")
+        st.markdown("#### 📋 How Defaulters are Detected")
+        st.info("""
+        An agent is flagged as a **defaulter** if:
+        
+        1. **Overall Silence > {silence_threshold}%** across all their calls
+        2. **OR Short Call Silence > {silence_threshold}%** (calls shorter than the "Short" cutoff)
+        
+        Agents with fewer than **{min_calls} calls** are skipped from detection.
+        
+        **Severity Levels:**
+        - 🔴 **High**: Overall Silence > 40%
+        - 🟠 **Medium**: Overall Silence 30-40%
+        - 🔵 **Low**: Overall Silence < 30% (but still above threshold)
+        """.format(
+            silence_threshold=st.session_state.get("silence_threshold", 30),
+            min_calls=st.session_state.get("min_calls_per_agent", 3)
+        ))
 
-else:
-    st.info("👆 Pick a client and date range above, then click **Fetch Calls** to get started.")
+# ----------------------------------------------------------------------
+# MAIN APP
+# ----------------------------------------------------------------------
+# Start scheduler on app load
+if not st.session_state.get("scheduler_running", False):
+    start_scheduler()
+
+# Header
+st.markdown("""
+<div class="callai-hero">
+    <h1>📞 CallAI · Talk-Time + Sentiment</h1>
+    <p>Analyze call recordings, measure talk-time/silence, transcribe, score sentiment, and generate reports.</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Navigation Tabs
+tab_dashboard, tab_settings = st.tabs(["📊 Dashboard / Call Analytics", "⚙️ Settings"])
+
+with tab_dashboard:
+    render_dashboard()
+
+with tab_settings:
+    render_settings()
